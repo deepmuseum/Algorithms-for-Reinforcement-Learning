@@ -4,7 +4,7 @@ import numpy as np
 
 class ToyEnv1(FiniteEnv):
     """
-    Enviroment with 3 states and 2 actions per state that gives a reward of 1 when going to the
+    Environment with 3 states and 2 actions per state that gives a reward of 1 when going to the
     last state and 0 otherwise.
 
     Args:
@@ -30,7 +30,7 @@ class ToyEnv1(FiniteEnv):
 
         # Initialize base class
         states = np.arange(Ns).tolist()
-        action_sets = [np.arange(Na).tolist()]*Ns
+        action_sets = [np.arange(Na).tolist()] * Ns
         super().__init__(states, action_sets, P, gamma)
 
     def reward_func(self, state, action, next_state):
@@ -48,13 +48,13 @@ class ToyEnv1(FiniteEnv):
         self.state = next_state
 
         observation = next_state
-        if observation==self.Ns-1:
-          done=True
+        if observation == self.Ns - 1:
+            done = True
         return observation, reward, done, info
 
     def sample_transition(self, s, a):
-        prob = self.P[s,a,:]
-        s_ = self.RS.choice(self.states, p = prob)
+        prob = self.P[s, a, :]
+        s_ = self.RS.choice(self.states, p=prob)
         return s_
 
     @property
@@ -63,5 +63,5 @@ class ToyEnv1(FiniteEnv):
         for s in range(self.Ns):
             for a in range(self.Na):
                 for sn in range(self.Ns):
-                    R[s,a,sn] = self.reward_func(s,a,sn)
+                    R[s, a, sn] = self.reward_func(s, a, sn)
         return R

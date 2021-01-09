@@ -31,7 +31,7 @@ class MDP(FiniteEnv):
 
         # Initialize base class
         states = np.arange(Ns).tolist()
-        action_sets = [np.arange(Na).tolist()]*Ns
+        action_sets = [np.arange(Na).tolist()] * Ns
         super().__init__(states, action_sets, P, gamma)
 
     def reward_func(self, state, action, next_state):
@@ -45,7 +45,7 @@ class MDP(FiniteEnv):
         next_state = self.sample_transition(self.state, action)
         reward = self.reward_func(self.state, action, next_state)
 
-        if self.state in self.bad_states or self.state == self.Ns-1:
+        if self.state in self.bad_states or self.state == self.Ns - 1:
             done = True
         else:
             done = False
@@ -57,8 +57,8 @@ class MDP(FiniteEnv):
         return observation, reward, done, info
 
     def sample_transition(self, s, a):
-        prob = self.P[s,a,:]
-        s_ = self.RS.choice(self.states, p = prob)
+        prob = self.P[s, a, :]
+        s_ = self.RS.choice(self.states, p=prob)
         return s_
 
     @property
@@ -67,15 +67,14 @@ class MDP(FiniteEnv):
         for s in range(self.Ns):
             for a in range(self.Na):
                 for sn in range(self.Ns):
-                    R[s,a,sn] = self.reward_func(s,a,sn)
+                    R[s, a, sn] = self.reward_func(s, a, sn)
         return R
 
     def render(self):
 
         env_to_print = "S"
 
-
-        for state in range(1,self.Ns-1) :
+        for state in range(1, self.Ns - 1):
             if state % 4 == 0:
                 env_to_print += "\n"
 
@@ -86,7 +85,9 @@ class MDP(FiniteEnv):
 
         env_to_print += "G"
 
-        print("(S: starting point, safe) (F: frozen surface, safe) (H: hole, fall to your doom) (G: goal, where the frisbee is located)")
+        print(
+            "(S: starting point, safe) (F: frozen surface, safe) (H: hole, fall to your doom) (G: goal, where the frisbee is located)"
+        )
         print("=================")
         print(env_to_print)
         print("=================")
@@ -94,10 +95,28 @@ class MDP(FiniteEnv):
 
 
 class FrozenLake(MDP):
-    def __init__(self, gamma=0.99, deterministic=False, data_path="./data"):
+    def __init__(self, gamma=0.99, deterministic=False, data_path="../../data"):
         if deterministic:
-            P = np.load(os.path.join(data_path, "frozen_lake_deterministic_transition.npy"))
+            P = np.load(
+                os.path.join(data_path, "frozen_lake_deterministic_transition.npy")
+            )
         else:
-            P = np.load(os.path.join(data_path, "frozen_lake_stochastic_transition.npy"))
+            P = np.load(
+                os.path.join(data_path, "frozen_lake_stochastic_transition.npy")
+            )
         bad_states = [5, 7, 11, 12]
         super().__init__(P=P, bad_states=bad_states, gamma=gamma)
+
+
+if __name__ == "__main__":
+
+    env = FrozenLake()
+    env.render()
+    env.step(1)
+    env.render()
+    _, _, done, _ = env.step(1)
+    env.render()
+    print(done)
+    _, _, done, _ = env.step(0)
+    env.render()
+    print(done)

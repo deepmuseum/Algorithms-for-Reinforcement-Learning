@@ -19,18 +19,20 @@ def create_edges(bins, sample=None, range=None):
         if np.ndim(bins[i]) == 0:
             if bins[i] < 1:
                 raise ValueError(
-                    '`bins[{}]` must be positive, when an integer'.format(i))
+                    "`bins[{}]` must be positive, when an integer".format(i)
+                )
             smin, smax = _get_outer_edges(sample[:, i], range[i])
             edges[i] = np.linspace(smin, smax, bins[i] + 1)
         elif np.ndim(bins[i]) == 1:
             edges[i] = np.asarray(bins[i])
             if np.any(edges[i][:-1] > edges[i][1:]):
                 raise ValueError(
-                    '`bins[{}]` must be monotonically increasing, when an array'
-                        .format(i))
+                    "`bins[{}]` must be monotonically increasing, when an array".format(
+                        i
+                    )
+                )
         else:
-            raise ValueError(
-                '`bins[{}]` must be a scalar or 1d array'.format(i))
+            raise ValueError("`bins[{}]` must be a scalar or 1d array".format(i))
 
         nbin[i] = len(edges[i]) + 1  # includes an outlier on each end
 
@@ -42,7 +44,7 @@ def get_position2(sample, edges, nbin):
     # Compute the bin number each sample falls into.
     Ncount = tuple(
         # avoid np.digitize to work around gh-11022
-        np.searchsorted(edges[i], sample[:, i], side='right')
+        np.searchsorted(edges[i], sample[:, i], side="right")
         for i in _range(D)
     )
     # Compute the sample indices in the flattened histogram matrix.
@@ -80,7 +82,7 @@ class Discretizer:
         if range is None:
             range = (None,) * D
         elif len(range) != D:
-            raise ValueError('range argument must have one entry per dimension')
+            raise ValueError("range argument must have one entry per dimension")
 
         self.edges, self.nbin = create_edges(bins, range=range)
 
@@ -110,4 +112,3 @@ class UniformDiscWOB(Discretizer):
     def available(self, sample):
         position = super(UniformDiscWOB, self).dpos(sample=sample)
         return position not in self.binstoremove
-

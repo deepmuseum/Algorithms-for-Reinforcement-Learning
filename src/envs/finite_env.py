@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import numpy as np
 
 
 class FiniteEnv(ABC):
@@ -21,6 +20,7 @@ class FiniteEnv(ABC):
         actions (list): list containing all possible actions = [0, 1, ..., Na-1]
 
     """
+
     def __init__(self, states, action_sets, P, gamma):
 
         self.states = states
