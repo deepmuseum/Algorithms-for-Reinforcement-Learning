@@ -2,7 +2,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from RL.src.utils import make_seed
+from RL.utils import make_seed
 
 
 class PolicyModel(nn.Module):
