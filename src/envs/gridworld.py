@@ -6,6 +6,46 @@ from finite_env import FiniteEnv
 
 
 class GridWorldWithPits(FiniteEnv):
+    """
+    Attributes
+    ----------
+    desc
+
+    grid
+
+    txt_map
+
+    action_names
+
+    n_rows
+
+    n_cols
+
+    normalize_reward
+
+    initial_state
+
+    coord2state
+
+    nb_states
+
+    state2coord
+
+    P
+
+    R
+
+    proba_succ
+
+    uniform_trans_proba
+
+    state_actions
+
+    last_action
+
+    current_step
+    """
+
     def __init__(
         self,
         grid,
@@ -53,7 +93,7 @@ class GridWorldWithPits(FiniteEnv):
         ]  # self.compute_available_actions()
         self.matrix_representation()
         self.lastaction = None
-        super(GridWorldWithPits, self).__init__(
+        super().__init__(
             states=range(self.nb_states),
             action_sets=self.state_actions,
             P=self.P,
@@ -62,6 +102,12 @@ class GridWorldWithPits(FiniteEnv):
         self.current_step = 0
 
     def matrix_representation(self):
+        """
+
+        Returns
+        -------
+
+        """
         if self.P is None:
             nstates = self.nb_states
             nactions = max(map(len, self.state_actions))
@@ -138,8 +184,10 @@ class GridWorldWithPits(FiniteEnv):
             self.d0[self.initial_state] = 1.0
 
     def compute_available_actions(self):
-        # define available actions in each state
-        # actions are indexed by: 0=right, 1=down, 2=left, 3=up
+        """
+        define available actions in each state
+        actions are indexed by: 0=right, 1=down, 2=left, 3=up
+        """
         state_actions = []
         for i in range(self.n_rows):
             for j in range(self.n_cols):
@@ -173,13 +221,41 @@ class GridWorldWithPits(FiniteEnv):
         return state_actions
 
     def description(self):
+        """
+
+        Returns
+        -------
+
+        """
         desc = {"name": type(self).__name__}
         return desc
 
     def reward_func(self, state, action, next_state):
+        """
+
+        Parameters
+        ----------
+        state
+        action
+        next_state
+
+        Returns
+        -------
+
+        """
         return self.R[state, action]
 
     def reset(self, s=None):
+        """
+
+        Parameters
+        ----------
+        s
+
+        Returns
+        -------
+
+        """
         self.lastaction = None
         if s is None:
             self.state = self.initial_state
@@ -189,6 +265,16 @@ class GridWorldWithPits(FiniteEnv):
         return self.state
 
     def step(self, action):
+        """
+
+        Parameters
+        ----------
+        action
+
+        Returns
+        -------
+
+        """
         try:
             action_index = self.state_actions[self.state].index(action)
         except:
@@ -213,6 +299,12 @@ class GridWorldWithPits(FiniteEnv):
         return next_state, reward, done, {}
 
     def render(self):
+        """
+
+        Returns
+        -------
+
+        """
         outfile = sys.stdout
 
         out = self.desc.copy().tolist()
@@ -242,6 +334,16 @@ class GridWorldWithPits(FiniteEnv):
             outfile.write("\n")
 
     def render_policy(self, pol):
+        """
+
+        Parameters
+        ----------
+        pol
+
+        Returns
+        -------
+
+        """
         outfile = sys.stdout
         out = self.desc.copy().tolist()
         out = [[c.decode("utf-8") for c in line] for line in out]
@@ -265,6 +367,12 @@ class GridWorldWithPits(FiniteEnv):
         outfile.write("\n".join(["".join(row) for row in out]) + "\n")
 
     def copy(self):
+        """
+
+        Returns
+        -------
+
+        """
         new_env = GridWorldWithPits(
             grid=self.grid,
             txt_map=self.txt_map,
@@ -274,6 +382,17 @@ class GridWorldWithPits(FiniteEnv):
         return new_env
 
     def sample_transition(self, s, a):
+        """
+
+        Parameters
+        ----------
+        s
+        a
+
+        Returns
+        -------
+
+        """
         try:
             p = self.P[s, a]
         except:
@@ -283,3 +402,4 @@ class GridWorldWithPits(FiniteEnv):
                 )
             )
         next_state = np.random.choice(self.nb_states, 1, p=p).item()
+        return next_state
