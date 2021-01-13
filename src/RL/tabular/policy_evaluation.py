@@ -1,5 +1,5 @@
 import numpy as np
-from utils import bellman_operator
+from RL.tabular.utils import bellman_operator
 
 
 class Prediction:
@@ -20,14 +20,13 @@ class Prediction:
     def __init__(self, env, policy, n_episodes, alpha):
         super().__init__()
 
-        self.env=env
+        self.env = env
         self.policy = policy
         self.n_episodes = n_episodes
-        self.alpha=alpha
-        self.V=np.zeros(env.Ns)         #initialize the state values
+        self.alpha = alpha
+        self.V = np.zeros(env.Ns)  # initialize the state values
 
-
-    def update(self,state,action,next_state,reward):
+    def update(self, state, action, next_state, reward):
         raise NotImplementedError
 
     def run_online(self):
@@ -40,10 +39,10 @@ class Prediction:
             while not done:
                 action = self.policy[state]
                 next_state, reward, done, info = self.env.step(action)
-                self.update(state,action,next_state,reward)
+                self.update(state, action, next_state, reward)
                 state = next_state
 
-    def iterative_policy_evalution(self,epsilon=1e-3):
+    def iterative_policy_evalution(self, epsilon=1e-3):
         """
         Perform policy evaluation by solving Bellman equation in an iterative way
         """
@@ -57,7 +56,9 @@ class TD_prediction(Prediction):
     """
 
     def __init__(self, env, policy, n_episodes, alpha):
-        super(Prediction, self).__init__(env, policy, n_episodes, alpha)
+        super().__init__(env, policy, n_episodes, alpha)
 
-    def update(self,state,action,next_state,reward):
-        self.V[state]+=self.alpha*(reward+self.env.gamma*self.V[next_state]-self.V[state])
+    def update(self, state, action, next_state, reward):
+        self.V[state] += self.alpha * (
+            reward + self.env.gamma * self.V[next_state] - self.V[state]
+        )
