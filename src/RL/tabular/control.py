@@ -26,6 +26,12 @@ class Control:
     def behave(self, state):
         raise NotImplementedError
 
+    def behavior_policy(self):
+        raise NotImplementedError
+
+    def target_policy(self):
+        raise NotImplementedError
+
     def update(self, state, action, next_state, reward):
         raise NotImplementedError
 
@@ -69,7 +75,7 @@ class QLearning(Control):
 
 class Sarsa(Control):
     """
-    Perform Q learning using epsilon greedy as a behaviour policy
+    Sarsa with an epsilon greedy as a behaviour policy
     """
 
     def __init__(self, env, n_episodes=10, alpha=0.01, epsilon=0.1):
@@ -84,5 +90,32 @@ class Sarsa(Control):
         self.Q[state, action] += self.alpha * (
             reward
             + self.env.gamma * self.Q[next_state, next_action]
+            - self.Q[state, action]
+        )
+
+class ExpectedSarsa(Control):
+    """
+    Expected Sarsa with an epsilon greedy as a behaviour policy and a greedy one as the target policy
+    N.B: in this case Expected Sarsa is just Q learning
+    """
+
+    def __init__(self, env, n_episodes=10, alpha=0.01, epsilon=0.1):
+        super(Control, self).__init__(env, n_episodes, alpha)
+        self.epsilon = epsilon
+
+    def behave(self, state):
+        return eps_greedy(state, self.env.Na, self.Q, self.epsilon)
+
+    def target_policy(self):
+        target_policy=np.zeros((self.env.Ns,self.env.Na))
+        for state in range(self.env.Ns):
+            target_policy[state][np.argmax(self.Q[state])] = 1
+        return target_policy
+
+    def update(self, state, action, next_state, reward):
+        target_policy=self.target_policy()
+        self.Q[state, action] += self.alpha * (
+            reward
+            + self.env.gamma * np.sum(target_policy[next_state]*self.Q[next_state])
             - self.Q[state, action]
         )
