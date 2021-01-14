@@ -1,4 +1,4 @@
-from finite_env import FiniteEnv
+from RL.envs.finite_env import FiniteEnv
 import numpy as np
 
 
