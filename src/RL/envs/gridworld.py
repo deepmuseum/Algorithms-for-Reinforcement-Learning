@@ -2,7 +2,7 @@ import numpy as np
 import copy
 import sys
 from gym import utils
-from finite_env import FiniteEnv
+from RL.envs.finite_env import FiniteEnv
 
 
 class GridWorldWithPits(FiniteEnv):
@@ -60,7 +60,6 @@ class GridWorldWithPits(FiniteEnv):
         self.txt_map = txt_map
 
         self.action_names = np.array(["right", "down", "left", "up"])
-
         self.n_rows, self.n_cols = len(self.grid), max(map(len, self.grid))
 
         # Create a map to translate coordinates [r,c] to scalar index

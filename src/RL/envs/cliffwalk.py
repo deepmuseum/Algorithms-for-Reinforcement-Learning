@@ -1,4 +1,4 @@
-from gridworld import GridWorldWithPits
+from RL.envs.gridworld import GridWorldWithPits
 
 
 class CliffWalk(GridWorldWithPits):

@@ -15,6 +15,6 @@ setup(
     # data_files=[("data", [''])],
     # Dependencies are pinned only to fix the environment during deployment.
     # There are no known issues with updating these versions in the future.
-    install_requires=["gym", "torch~=1.7.1"],
+    install_requires=[],
     use_scm_version=True,
 )
