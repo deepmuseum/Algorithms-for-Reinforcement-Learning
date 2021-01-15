@@ -13,6 +13,14 @@ Algorithms based on the policy gradient theorem :
 
 ## Reinforce with baseline :
 
+Here, we add a network to estimate the value function and use as a baseline to reduce
+variance of estimations in Reinforce algorithm. Reinforce with Baseline is theoretically
+guaranteed by the fact that the policy gradient theorem can be generalized as follows :
+
+![Generalized Policy gradient theorem](../../../../figures/generalized_pg_theorem.png)
+
+![Reinforce with baseline pseudo code](../../../../figures/reinforce_baseline_pseudo_code.png)
+
 
 ## Advantage Actor-Critic (A2C) :
 

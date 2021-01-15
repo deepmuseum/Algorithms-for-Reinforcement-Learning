@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from RL.utils import make_seed
 
+# TODO : use GPU & use tqdm
+
 
 class PolicyModel(nn.Module):
     """
@@ -60,7 +62,6 @@ class REINFORCE:
         self.model = model
         self.gamma = gamma
 
-        # the optimizer used by PyTorch (Stochastic Gradient, Adagrad, Adam, etc.)
         self.optimizer = optimizer
         # self.monitor_env = Monitor(env, "./gym-results", force=True, video_callable=lambda episode: True)
 
@@ -106,7 +107,7 @@ class REINFORCE:
             The cumulative discounted rewards of each trajectory
         """
         reward_trajectories = []
-        loss = 0
+        loss = torch.tensor(0, dtype=torch.float)
         for i in range(n_trajectories):
             rewards = []
             observation = self.env.reset()
@@ -119,14 +120,12 @@ class REINFORCE:
                 policy.append(proba)
                 observation, reward, done, info = self.env.step(int(action))
                 rewards.append(reward)
-            reward_trajectories.append(self._compute_returns(rewards)[0])
+            returns = self._compute_returns(rewards)
+            reward_trajectories.append(returns[0])
+
             for t in range(len(rewards)):
                 # pseudo loss
-                loss -= (
-                    torch.log(policy[t])
-                    * self._compute_returns(rewards)[t]
-                    / n_trajectories
-                )
+                loss -= torch.log(policy[t]) * returns[t] / n_trajectories
         self.env.close()
         self.optimizer.zero_grad()
         loss.backward()
@@ -159,6 +158,76 @@ class REINFORCE:
         pass
 
 
+class BaselineReinforce(REINFORCE):
+    def __init__(
+        self, env, model, optimizer_policy, seed, gamma, value_network, optimizer_value
+    ):
+        super().__init__(env, model, optimizer_policy, seed, gamma)
+        self.value_network = value_network
+        self.optimizer_value = optimizer_value
+        self.criterion_value = nn.MSELoss()
+
+    def optimize_step(self, n_trajectories):
+        """
+        Perform a gradient update using n_trajectories
+
+        Parameters
+        ----------
+        n_trajectories : int
+            The number of trajectories used to approximate the expectation
+
+        Returns
+        -------
+        array
+            The cumulative discounted rewards of each trajectory
+        """
+        reward_trajectories = []
+        loss_policy, loss_value = (
+            torch.tensor(0, dtype=torch.float),
+            torch.tensor(0, dtype=torch.float),
+        )
+        for i in range(n_trajectories):
+            rewards = []
+            observation = self.env.reset()
+            policy = []
+            state_values = []
+            done = False
+            while not done:
+                observation = torch.tensor(observation, dtype=torch.float)
+                state_values.append(self.value_network(observation))
+                action = self.model.select_action(observation)
+                proba = self.model(observation)[int(action)]
+                policy.append(proba)
+                observation, reward, done, info = self.env.step(int(action))
+                rewards.append(reward)
+            returns = self._compute_returns(rewards)
+            reward_trajectories.append(returns[0])
+
+            for t in range(len(rewards)):
+                # pseudo loss
+
+                loss_policy -= (
+                    torch.log(policy[t])
+                    * (returns[t] - state_values[t].item())
+                    / n_trajectories
+                )
+                loss_value += (
+                    self.criterion_value(
+                        torch.tensor([returns[t]], dtype=torch.float), state_values[t]
+                    )
+                    / n_trajectories
+                )
+
+        self.env.close()
+        self.optimizer.zero_grad()
+        self.optimizer_value.zero_grad()
+
+        loss_policy.backward()
+        loss_value.backward()
+        self.optimizer.step()
+        return np.array(reward_trajectories)
+
+
 if __name__ == "__main__":
 
     from torch import optim
@@ -168,7 +237,7 @@ if __name__ == "__main__":
 
     observations = environment.observation_space.shape[0]
     actions = environment.action_space.n
-    net = nn.Sequential(
+    net_policy = nn.Sequential(
         nn.Linear(in_features=observations, out_features=16),
         nn.ReLU(),
         nn.Linear(in_features=16, out_features=8),
@@ -177,10 +246,35 @@ if __name__ == "__main__":
         nn.Softmax(dim=0),
     )
 
-    policy_model = PolicyModel(observations, actions, net)
-
-    opt = optim.Adam(net.parameters(), lr=0.01)
-    agent = REINFORCE(
-        env=environment, model=policy_model, gamma=1, seed=0, optimizer=opt
+    net_value = nn.Sequential(
+        nn.Linear(in_features=observations, out_features=16),
+        nn.ReLU(),
+        nn.Linear(in_features=16, out_features=8),
+        nn.ReLU(),
+        nn.Linear(in_features=8, out_features=1),
     )
+
+    policy_model = PolicyModel(observations, actions, net_policy)
+
+    opt_policy = optim.Adam(net_policy.parameters(), lr=0.01)
+    opt_value = optim.Adam(net_value.parameters(), lr=0.01)
+
+    # agent = REINFORCE(
+    #     env=environment,
+    #     model=policy_model,
+    #     gamma=1,
+    #     seed=0,
+    #     optimizer=opt_policy,
+    # )
+
+    agent = BaselineReinforce(
+        env=environment,
+        model=policy_model,
+        gamma=1,
+        seed=0,
+        optimizer_policy=opt_policy,
+        optimizer_value=opt_value,
+        value_network=net_value,
+    )
+
     agent.train(n_trajectories=50, n_update=50)
