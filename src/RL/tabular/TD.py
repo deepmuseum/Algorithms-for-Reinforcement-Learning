@@ -100,7 +100,7 @@ class DoubleQLearning(Control):
             )
 
 
-class TD_prediction(Prediction):
+class TDprediction(Prediction):
     """
     Module to model the policy evaluation for TD(0)
 
