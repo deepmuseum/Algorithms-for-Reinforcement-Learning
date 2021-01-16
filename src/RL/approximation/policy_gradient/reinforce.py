@@ -206,12 +206,12 @@ class BaselineReinforce(REINFORCE):
             for t in range(len(rewards)):
                 # pseudo loss
 
-                loss_policy -= (
+                loss_policy -= self.gamma ** t * (
                     torch.log(policy[t])
                     * (returns[t] - state_values[t].item())
                     / n_trajectories
                 )
-                loss_value += (
+                loss_value += self.gamma ** t * (
                     self.criterion_value(
                         torch.tensor([returns[t]], dtype=torch.float), state_values[t]
                     )
