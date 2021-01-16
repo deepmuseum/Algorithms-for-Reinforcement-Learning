@@ -259,22 +259,18 @@ if __name__ == "__main__":
     opt_policy = optim.Adam(net_policy.parameters(), lr=0.01)
     opt_value = optim.Adam(net_value.parameters(), lr=0.01)
 
-    # agent = REINFORCE(
+    agent = REINFORCE(
+        env=environment, model=policy_model, gamma=1, seed=0, optimizer=opt_policy
+    )
+
+    # agent = BaselineReinforce(
     #     env=environment,
     #     model=policy_model,
     #     gamma=1,
     #     seed=0,
-    #     optimizer=opt_policy,
+    #     optimizer_policy=opt_policy,
+    #     optimizer_value=opt_value,
+    #     value_network=net_value,
     # )
-
-    agent = BaselineReinforce(
-        env=environment,
-        model=policy_model,
-        gamma=1,
-        seed=0,
-        optimizer_policy=opt_policy,
-        optimizer_value=opt_value,
-        value_network=net_value,
-    )
 
     agent.train(n_trajectories=50, n_update=50)
