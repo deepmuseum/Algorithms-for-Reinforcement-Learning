@@ -151,37 +151,6 @@ class DQN:
         return returns
 
 
-class DDQN(DQN):
-    def __init__(
-        self,
-        env,
-        q_network,
-        gamma,
-        batch_size,
-        optimizer,
-        device,
-        num_episodes,
-        max_size_buffer,
-        steps_target=5,
-    ):
-
-        super().__init__(
-            env,
-            q_network,
-            gamma,
-            batch_size,
-            optimizer,
-            device,
-            num_episodes,
-            max_size_buffer,
-            steps_target,
-        )
-
-    def choose_optimal_actions(self, states):
-        values = self.q_network(states)
-        return values.argmax(dim=1)
-
-
 if __name__ == "__main__":
     import gym
     from torch import optim
@@ -205,7 +174,7 @@ if __name__ == "__main__":
     bsz = 100
     num_ep = 1000
     max_size = bsz * 10
-    agent = DDQN(
+    agent = DQN(
         env=environment,
         q_network=q_net,
         gamma=g,
