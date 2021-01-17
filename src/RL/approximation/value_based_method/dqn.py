@@ -14,9 +14,11 @@ class QNetwork(nn.Module):
     def forward(self, state):
         return self.model(state)
 
-    def compute_targets(self, rewards, gamma, states, dones):
+    def compute_targets(self, rewards, gamma, states, optimal_actions, dones):
         values = self.forward(states)
-        return rewards + (1 - dones) * gamma * values.max(dim=1).values
+        return rewards + (1 - dones) * gamma * values.gather(
+            1, optimal_actions.unsqueeze(-1)
+        ).squeeze(-1)
 
     def eps_greedy(self, state, epsilon):
         if np.random.uniform() <= epsilon:
@@ -46,7 +48,7 @@ class DQN:
         device,
         num_episodes,
         max_size_buffer,
-        steps_target=20,
+        steps_target=10,
     ):
 
         self.q_network = q_network
@@ -73,6 +75,10 @@ class DQN:
         else:
             return self.memory_buffer
 
+    def choose_optimal_actions(self, states):
+        values = self.copy_network(states)
+        return values.argmax(dim=1)
+
     def build_targets_values(self, examples):
         states, actions, rewards, next_observations, dones = zip(*examples)
         states = torch.tensor(states, dtype=torch.float)
@@ -81,7 +87,11 @@ class DQN:
         values = self.q_network(states)  # shape batch_size, num_actions
         values = values.gather(-1, torch.tensor(actions).unsqueeze(-1))
         values = values.squeeze(-1)
-        targets = self.copy_network.compute_targets(rewards, self.gamma, states, dones)
+        next_observations = torch.tensor(next_observations, dtype=torch.float)
+        optimal_next_actions = self.choose_optimal_actions(next_observations)
+        targets = self.copy_network.compute_targets(
+            rewards, self.gamma, next_observations, optimal_next_actions, dones
+        )
         return targets, values
 
     def train(self):
@@ -141,6 +151,37 @@ class DQN:
         return returns
 
 
+class DDQN(DQN):
+    def __init__(
+        self,
+        env,
+        q_network,
+        gamma,
+        batch_size,
+        optimizer,
+        device,
+        num_episodes,
+        max_size_buffer,
+        steps_target=5,
+    ):
+
+        super().__init__(
+            env,
+            q_network,
+            gamma,
+            batch_size,
+            optimizer,
+            device,
+            num_episodes,
+            max_size_buffer,
+            steps_target,
+        )
+
+    def choose_optimal_actions(self, states):
+        values = self.q_network(states)
+        return values.argmax(dim=1)
+
+
 if __name__ == "__main__":
     import gym
     from torch import optim
@@ -157,14 +198,14 @@ if __name__ == "__main__":
         nn.Linear(in_features=8, out_features=num_actions),
     )
 
-    opt = optim.Adam(q_model.parameters(), lr=0.001)
+    opt = optim.Adam(q_model.parameters(), lr=0.01)
 
     q_net = QNetwork(model=q_model, n_a=num_actions)
     g = 1
     bsz = 100
-    num_ep = 2000
+    num_ep = 1000
     max_size = bsz * 10
-    agent = DQN(
+    agent = DDQN(
         env=environment,
         q_network=q_net,
         gamma=g,
