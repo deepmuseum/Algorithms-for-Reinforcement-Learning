@@ -39,6 +39,18 @@ def eps_greedy(state, n_actions, Q, epsilon):
         return np.argmax(Q[state])
 
 
+def proba_eps_greedy(n_states, n_actions, Q, epsilon):
+    p = np.zeros((n_states, n_actions))
+    for state in range(n_states):
+        for action in range(n_actions):
+            p[state][action] = (
+                1 - epsilon
+                if action == np.argmax(Q[state])
+                else epsilon / (n_actions - 1)
+            )
+    return p
+
+
 class Control:
     def __init__(self, env, n_episodes=10, alpha=0.01):
         """
@@ -173,7 +185,7 @@ class Prediction:
         raise NotImplementedError
 
 
-class PredictionNstep:
+class Nstep:
     """
     Module to model the policy evaluation
     Attributes
@@ -188,15 +200,24 @@ class PredictionNstep:
         learning rate
     """
 
-    def __init__(self, env, policy, n_episodes, alpha, n):
+    def __init__(self, env, n_episodes, alpha, n, policy=None, epsilon=0.1):
         super().__init__()
 
         self.env = env
-        self.policy = policy
         self.n_episodes = n_episodes
         self.alpha = alpha
         self.n = n
+        self.epsilon = epsilon
         self.V = np.zeros(self.env.Ns)  # initialize the state values
+        self.Q = np.zeros((self.env.Ns, self.env.Na))
+        if policy is None:
+            self.problem = "control"
+            self.policy = np.random.rand(env.Ns, env.Na)
+            row_sums = self.policy.sum(axis=1)
+            self.policy = self.policy / row_sums[:, np.newaxis]
+        else:
+            self.problem = "prediction"
+            self.policy = policy
 
     def sample_action(self, state, policy):
         return np.random.choice(np.arange(self.env.Na), p=policy[state])
@@ -223,9 +244,14 @@ class PredictionNstep:
                     trajectory["rewards"].append(reward)
                     trajectory["states"].append(next_state)
                     action, T = self.act(done, next_state, t)
+                    trajectory["actions"].append(action)
                 to = t - self.n + 1
                 t += 1
                 if to >= 0:
                     self.update(trajectory, to, T)
-                    if to == T - 1:
-                        break
+                    if self.problem == "control":
+                        self.policy *= 0
+                        for state in range(self.env.Ns):
+                            self.policy[state][np.argmax(self.Q[state])] = 1
+                if to == T - 1:
+                    break
