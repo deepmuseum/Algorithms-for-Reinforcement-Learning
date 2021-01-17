@@ -27,3 +27,16 @@ The gradient descent step follows :
 
 
 ## Double Deep Q-Network (DDQN)
+
+Double Q-learning has been proposed to overcome the issue of overestimation of the action-state value function.
+Overestimation in Q-learning happens when building the targets of the algorithm, choosing the optimal next action and computing
+its value with the same approximation function.
+
+Van Hasselt et al ([Deep Reinforcement Learning with Double Q-learning](https://arxiv.org/abs/1509.06461)) applied
+double Q-learning in the context of deep learning. First, they show that overestimation systematically occurs in Q-learning,
+secondly they show that this overestimation harms performances of the model.
+
+The modification made to the algorithm simply boils down to choosing the optimal action according to the current weights of
+the model and evaluating its value according to the past weights :
+
+![ddqn update](../../../../figures/ddqn_update.png)
