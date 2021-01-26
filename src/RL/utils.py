@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-import gym
+from typing import Optional
 
 
 def make_seed(seed):
@@ -9,10 +9,12 @@ def make_seed(seed):
 
 
 class PseudoEnv:
-    def __init__(self, env):
+    def __init__(self, env, device):
         self.env = env
-        self.observation = None
-        self.observation_dim = None
+        self.device = device
+        self.observation_dim: Optional[int] = None
+        self.reset()
+        self.observation = torch.zeros((4, self.observation_dim), device=self.device)
 
     def preprocess(self, state):
         """
@@ -28,24 +30,35 @@ class PseudoEnv:
         state[state == 144] = 0
         state[state == 109] = 0
         state[state != 0] = 1
-        return state.astype(np.float).ravel()
+        return state.reshape(-1)
 
     def step(self, action):
         next_observation, reward, done, info = self.env.step(action)
-        next_observation = self.preprocess(next_observation)
-        delta_observation = (
-            next_observation - self.observation
-            if self.observation is not None
-            else next_observation * 0
+        next_observation = torch.tensor(
+            next_observation, dtype=torch.float, device=self.device
         )
-        self.observation = next_observation
-        return delta_observation, reward, done, info
+        next_observation = self.preprocess(next_observation)
+
+        # delta_observation = (
+        #     next_observation - self.observation
+        #     if self.observation is not None
+        #     else next_observation
+        # )
+        tmp = self.observation.clone()
+        self.observation[:-1] = tmp[1:]
+        self.observation[-1] = next_observation
+        return self.observation.reshape(-1), reward, done, info
 
     def reset(self):
         observation = self.env.reset()
+        observation = torch.tensor(observation, dtype=torch.float, device=self.device)
         observation = self.preprocess(observation)
         self.observation_dim = observation.shape[0]
-        return observation
+        self.observation = torch.zeros((4, self.observation_dim), device=self.device)
+        tmp = self.observation.clone()
+        self.observation[:-1] = tmp[1:]
+        self.observation[-1] = observation
+        return self.observation.reshape(-1)
 
     def close(self):
         self.env.close()

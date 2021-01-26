@@ -53,6 +53,7 @@ class DQN:
     ):
 
         self.q_network = q_network
+        self.q_network.train()
         self.copy_network = c(q_network)
         self.env = env
         self.batch_size = batch_size
@@ -82,13 +83,17 @@ class DQN:
 
     def build_targets_values(self, examples):
         states, actions, rewards, next_observations, dones = zip(*examples)
-        states = torch.tensor(states, dtype=torch.float)
-        rewards = torch.tensor(rewards, dtype=torch.float)
-        dones = torch.tensor(dones, dtype=torch.float)
+        # states = torch.tensor(states, dtype=torch.float, device=self.device)
+        states = torch.cat(states, dim=0)
+        rewards = torch.tensor(rewards, dtype=torch.float, device=self.device)
+        dones = torch.tensor(dones, dtype=torch.float, device=self.device)
         values = self.q_network(states)  # shape batch_size, num_actions
-        values = values.gather(-1, torch.tensor(actions).unsqueeze(-1))
+        values = values.gather(
+            -1, torch.tensor(actions, device=self.device).unsqueeze(-1)
+        )
         values = values.squeeze(-1)
-        next_observations = torch.tensor(next_observations, dtype=torch.float)
+        # next_observations = torch.tensor(next_observations, dtype=torch.float, device=self.device)
+        next_observations = torch.cat(next_observations, dim=0)
         optimal_next_actions = self.choose_optimal_actions(next_observations)
         targets = self.copy_network.compute_targets(
             rewards, self.gamma, next_observations, optimal_next_actions, dones
@@ -106,12 +111,18 @@ class DQN:
             steps = 0
             while not done:
                 steps += 1
-                observation_tensor = torch.tensor(observation, dtype=torch.float)
-                action = self.q_network.eps_greedy(observation_tensor, self.epsilon)
+                # observation_tensor = torch.tensor(observation, dtype=torch.float, device=self.device)
+                action = self.q_network.eps_greedy(observation, self.epsilon)
                 next_observation, reward, done, _ = self.env.step(action)
                 total_return += reward
                 self.memory_buffer.append(
-                    (observation, action, reward, next_observation, done)
+                    (
+                        observation.unsqueeze(0),
+                        action,
+                        reward,
+                        next_observation.unsqueeze(0),
+                        done,
+                    )
                 )
                 if len(self.memory_buffer) > self.max_size_buffer:
                     self.memory_buffer.pop(0)
@@ -128,6 +139,7 @@ class DQN:
 
             if (episode + 1) % 10 == 0:
                 returns = self.evaluate()
+                self.q_network.train()
                 tk.set_postfix(
                     {
                         f"mean return": np.mean(returns),
@@ -138,18 +150,20 @@ class DQN:
 
     def evaluate(self):
         returns = []
-        for i in range(10):
-            observation = self.env.reset()
-            done = False
-            episode_return = 0
-            while not done:
-                observation = torch.tensor(observation, dtype=torch.float)
-                action = self.q_network.greedy(observation)
-                observation, reward, done, _ = self.env.step(action)
-                episode_return += reward
-            returns.append(episode_return)
-            self.env.close()
-        return returns
+        self.q_network.eval()
+        with torch.no_grad():
+            for _ in range(10):
+                observation = self.env.reset()
+                done = False
+                episode_return = 0
+                while not done:
+                    # observation = torch.tensor(observation, dtype=torch.float, device=self.device)
+                    action = self.q_network.greedy(observation)
+                    observation, reward, done, _ = self.env.step(action)
+                    episode_return += reward
+                returns.append(episode_return)
+                self.env.close()
+            return returns
 
 
 class DDQN(DQN):
@@ -165,7 +179,6 @@ class DDQN(DQN):
         max_size_buffer,
         steps_target=5,
     ):
-
         super().__init__(
             env,
             q_network,
@@ -187,13 +200,17 @@ if __name__ == "__main__":
     import gym
     from torch import optim
 
+    device = torch.device("cuda")
+
     environment_ = gym.make(
         "BreakoutDeterministic-v4"
-    )  #'BreakoutDeterministic-v4' "Pong-v0" "CartPole-v1"
-    environment = PseudoEnv(environment_)
-    _ = environment.reset()
+    )  # 'BreakoutDeterministic-v4' "Pong-v0" "CartPole-v1"
+    environment = PseudoEnv(environment_, device)
+    environment.reset()
     observations = environment.observation_dim
     num_actions = environment.env.action_space.n
+    print(f"observation dimension {observations}")
+    print(f"number of actions {num_actions}")
 
     # q_model = nn.Sequential(
     #     nn.Linear(in_features=observations, out_features=16),
@@ -204,15 +221,15 @@ if __name__ == "__main__":
     # )
 
     q_model = nn.Sequential(
-        nn.Linear(in_features=observations, out_features=200),
+        nn.Linear(in_features=4 * observations, out_features=300),
         nn.ReLU(),
-        nn.Linear(in_features=200, out_features=num_actions),
+        nn.Linear(in_features=100, out_features=num_actions),
     )
 
     opt = optim.Adam(q_model.parameters(), lr=0.01)
 
-    q_net = QNetwork(model=q_model, n_a=num_actions)
-    g = 1
+    q_net = QNetwork(model=q_model, n_a=num_actions).to(device)
+    g = 0.9
     bsz = 100
     num_ep = 1000
     max_size = bsz * 10
@@ -222,7 +239,7 @@ if __name__ == "__main__":
         gamma=g,
         batch_size=bsz,
         optimizer=opt,
-        device=torch.device("cpu"),
+        device=device,
         num_episodes=num_ep,
         max_size_buffer=max_size,
     )
