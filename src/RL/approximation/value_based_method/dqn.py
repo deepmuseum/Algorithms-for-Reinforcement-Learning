@@ -3,6 +3,7 @@ import numpy as np
 from torch import nn
 from copy import deepcopy as c
 from tqdm import tqdm
+from RL.utils import PseudoEnv
 
 
 class QNetwork(nn.Module):
@@ -186,16 +187,26 @@ if __name__ == "__main__":
     import gym
     from torch import optim
 
-    environment = gym.make("CartPole-v1")
-    observations = environment.observation_space.shape[0]
-    num_actions = environment.action_space.n
+    environment_ = gym.make(
+        "BreakoutDeterministic-v4"
+    )  #'BreakoutDeterministic-v4' "Pong-v0" "CartPole-v1"
+    environment = PseudoEnv(environment_)
+    _ = environment.reset()
+    observations = environment.observation_dim
+    num_actions = environment.env.action_space.n
+
+    # q_model = nn.Sequential(
+    #     nn.Linear(in_features=observations, out_features=16),
+    #     nn.ReLU(),
+    #     nn.Linear(in_features=16, out_features=8),
+    #     nn.ReLU(),
+    #     nn.Linear(in_features=8, out_features=num_actions),
+    # )
 
     q_model = nn.Sequential(
-        nn.Linear(in_features=observations, out_features=16),
+        nn.Linear(in_features=observations, out_features=200),
         nn.ReLU(),
-        nn.Linear(in_features=16, out_features=8),
-        nn.ReLU(),
-        nn.Linear(in_features=8, out_features=num_actions),
+        nn.Linear(in_features=200, out_features=num_actions),
     )
 
     opt = optim.Adam(q_model.parameters(), lr=0.01)
