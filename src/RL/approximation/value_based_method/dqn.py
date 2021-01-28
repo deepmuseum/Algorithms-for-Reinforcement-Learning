@@ -61,7 +61,6 @@ class DQN:
         self.optimizer = optimizer
         self.memory_buffer = []
         self.max_size_buffer = max_size_buffer
-        # TODO : use GPU
         self.device = device
         self.num_episodes = num_episodes
         self.criterion = nn.MSELoss()
@@ -116,13 +115,7 @@ class DQN:
                 next_observation, reward, done, _ = self.env.step(action)
                 total_return += reward
                 self.memory_buffer.append(
-                    (
-                        observation.unsqueeze(0),
-                        action,
-                        reward,
-                        next_observation.unsqueeze(0),
-                        done,
-                    )
+                    (observation, action, reward, next_observation, done)
                 )
                 if len(self.memory_buffer) > self.max_size_buffer:
                     self.memory_buffer.pop(0)
@@ -199,6 +192,7 @@ class DDQN(DQN):
 if __name__ == "__main__":
     import gym
     from torch import optim
+    import torch.nn.functional as F
 
     device = torch.device("cuda")
 
@@ -220,11 +214,31 @@ if __name__ == "__main__":
     #     nn.Linear(in_features=8, out_features=num_actions),
     # )
 
-    q_model = nn.Sequential(
-        nn.Linear(in_features=4 * observations, out_features=300),
-        nn.ReLU(),
-        nn.Linear(in_features=100, out_features=num_actions),
-    )
+    class CNNModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv1 = nn.Conv2d(4, 6, 5)
+            # we use the maxpool multiple times, but define it once
+            self.pool = nn.MaxPool2d(2, 2)
+            # in_channels = 6 because self.conv1 output 6 channel
+            self.conv2 = nn.Conv2d(6, 10, 5)
+            # 5*5 comes from the dimension of the last convnet layer
+            self.conv3 = nn.Conv2d(10, 16, 5)
+            self.fc1 = nn.Linear(576, 120)
+            self.fc2 = nn.Linear(120, 84)
+            self.fc3 = nn.Linear(84, num_actions)
+
+        def forward(self, x):
+            x = self.pool(F.relu(self.conv1(x)))
+            x = self.pool(F.relu(self.conv2(x)))
+            x = self.pool(F.relu(self.conv3(x)))
+            x = x.view(-1, 576)
+            x = F.relu(self.fc1(x))
+            x = F.relu(self.fc2(x))
+            x = self.fc3(x)  # no activation on final layer
+            return x
+
+    q_model = CNNModel()
 
     opt = optim.Adam(q_model.parameters(), lr=0.01)
 
