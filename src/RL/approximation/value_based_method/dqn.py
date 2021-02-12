@@ -152,12 +152,83 @@ class DQN:
 
 
 if __name__ == "__main__":
-    import gym
-    from torch import optim
 
-    environment = gym.make("CartPole-v1")
-    observations = environment.observation_space.shape[0]
-    num_actions = environment.action_space.n
+    from torch import optim
+    from kaggle_environments import make
+    from kaggle_environments.envs.hungry_geese.hungry_geese import (
+        Observation,
+        Configuration,
+        Action,
+        row_col,
+    )
+
+    # What's necessary ?
+    # step function, that takes the action in entry and return observation reward and done
+    # observation must be a list of floats
+    # make a grid representing the state of the game :
+    # 1 -> body
+    # 2 -> head
+    # 3 -> food
+    # 0 -> nothing
+    # 4 -> ennemy
+    # the grid is first flattened, then maybe we'll use CNNs
+
+    # close
+    # reset
+
+    class PseudoEnvGeese:
+        def __init__(self, enemy="simple_towards.py"):
+            self.env = make("hungry_geese", debug=True)
+            self.trainer = self.env.train([None, enemy])
+            self.grid = np.zeros(
+                (self.env.configuration["rows"], self.env.configuration["columns"])
+            )
+            self.configuration = Configuration(self.env.configuration)
+
+        def step(self, action):
+            self.grid = np.zeros(
+                (self.env.configuration["rows"], self.env.configuration["columns"])
+            )
+            obs, reward, done, _ = self.trainer.step(action)
+            obs = Observation(obs)
+            player_index = obs.index
+            player_goose = obs.geese[player_index]
+            player_head = player_goose[0]
+            player_head_row, player_head_column = row_col(
+                player_head, self.configuration.columns
+            )
+            self.grid[player_head_row, player_head_column] = 2
+            player_body = player_goose[1:]
+            rows, cols = [], []
+            for elt in player_body:
+                row, col = row_col(elt, self.configuration.columns)
+                rows.append(row)
+                cols.append(col)
+            self.grid[rows, cols] = 1
+            foods = obs.food
+            for food in foods:
+                food_row, food_column = row_col(food, self.configuration.columns)
+                self.grid[food_row, food_column] = 3
+            enemies = [obs.geese[i] for i in range(len(obs.geese)) if i != player_index]
+            rows, cols = [], []
+            for enemy in enemies:
+                for elt in enemy:
+                    row, col = row_col(elt, self.configuration.columns)
+                    rows.append(row)
+                    cols.append(col)
+            self.grid[rows, cols] = 1
+
+            return self.grid.flatten(), reward, done, _
+
+        def reset(self):
+            self.trainer.reset()
+
+        def close(self):
+            pass
+
+    environment = PseudoEnvGeese()
+    observations = environment.configuration.columns * environment.configuration.rows
+    num_actions = 4
 
     q_model = nn.Sequential(
         nn.Linear(in_features=observations, out_features=16),
@@ -180,7 +251,7 @@ if __name__ == "__main__":
         gamma=g,
         batch_size=bsz,
         optimizer=opt,
-        device=torch.device("cpu"),
+        device=torch.device("cuda:0"),
         num_episodes=num_ep,
         max_size_buffer=max_size,
     )
