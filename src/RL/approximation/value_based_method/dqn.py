@@ -49,6 +49,7 @@ class DQN:
         num_episodes,
         max_size_buffer,
         steps_target=10,
+        action_map=None,
     ):
 
         self.q_network = q_network
@@ -59,12 +60,15 @@ class DQN:
         self.optimizer = optimizer
         self.memory_buffer = []
         self.max_size_buffer = max_size_buffer
-        # TODO : use GPU
         self.device = device
         self.num_episodes = num_episodes
         self.criterion = nn.MSELoss()
         self.epsilon = 0.1
         self.step_target = steps_target
+        if action_map is not None:
+            self.action_map = action_map
+        else:
+            action_map = [i for i in range(self.q_network.n_a)]
 
     def sample_from_buffer(self):
         if len(self.memory_buffer) >= self.batch_size:
@@ -81,13 +85,17 @@ class DQN:
 
     def build_targets_values(self, examples):
         states, actions, rewards, next_observations, dones = zip(*examples)
-        states = torch.tensor(states, dtype=torch.float)
-        rewards = torch.tensor(rewards, dtype=torch.float)
-        dones = torch.tensor(dones, dtype=torch.float)
+        states = torch.tensor(states, dtype=torch.float, device=self.device)
+        rewards = torch.tensor(rewards, dtype=torch.float, device=self.device)
+        dones = torch.tensor(dones, dtype=torch.float, device=self.device)
         values = self.q_network(states)  # shape batch_size, num_actions
-        values = values.gather(-1, torch.tensor(actions).unsqueeze(-1))
+        values = values.gather(
+            -1, torch.tensor(actions, device=self.device).unsqueeze(-1)
+        )
         values = values.squeeze(-1)
-        next_observations = torch.tensor(next_observations, dtype=torch.float)
+        next_observations = torch.tensor(
+            next_observations, dtype=torch.float, device=self.device
+        )
         optimal_next_actions = self.choose_optimal_actions(next_observations)
         targets = self.copy_network.compute_targets(
             rewards, self.gamma, next_observations, optimal_next_actions, dones
@@ -105,9 +113,13 @@ class DQN:
             steps = 0
             while not done:
                 steps += 1
-                observation_tensor = torch.tensor(observation, dtype=torch.float)
+                observation_tensor = torch.tensor(
+                    observation, dtype=torch.float, device=self.device
+                )
                 action = self.q_network.eps_greedy(observation_tensor, self.epsilon)
-                next_observation, reward, done, _ = self.env.step(action)
+                next_observation, reward, done, _ = self.env.step(
+                    self.action_map[action]
+                )
                 total_return += reward
                 self.memory_buffer.append(
                     (observation, action, reward, next_observation, done)
@@ -142,9 +154,11 @@ class DQN:
             done = False
             episode_return = 0
             while not done:
-                observation = torch.tensor(observation, dtype=torch.float)
+                observation = torch.tensor(
+                    observation, dtype=torch.float, device=self.device
+                )
                 action = self.q_network.greedy(observation)
-                observation, reward, done, _ = self.env.step(action)
+                observation, reward, done, _ = self.env.step(self.action_map[action])
                 episode_return += reward
             returns.append(episode_return)
             self.env.close()
@@ -176,9 +190,28 @@ if __name__ == "__main__":
     # close
     # reset
 
+    def enemy_toward(obs_dict, config_dict):
+        """This agent always moves toward observation.food[0] but does not take advantage of board wrapping"""
+        observation = Observation(obs_dict)
+        configuration = Configuration(config_dict)
+        player_index = observation.index
+        player_goose = observation.geese[player_index]
+        player_head = player_goose[0]
+        player_row, player_column = row_col(player_head, configuration.columns)
+        food = observation.food[0]
+        food_row, food_column = row_col(food, configuration.columns)
+
+        if food_row > player_row:
+            return Action.SOUTH.name
+        if food_row < player_row:
+            return Action.NORTH.name
+        if food_column > player_column:
+            return Action.EAST.name
+        return Action.WEST.name
+
     class PseudoEnvGeese:
-        def __init__(self, enemy="simple_towards.py"):
-            self.env = make("hungry_geese", debug=True)
+        def __init__(self, enemy=enemy_toward):
+            self.env = make("hungry_geese", debug=False)
             self.trainer = self.env.train([None, enemy])
             self.grid = np.zeros(
                 (self.env.configuration["rows"], self.env.configuration["columns"])
@@ -193,35 +226,75 @@ if __name__ == "__main__":
             obs = Observation(obs)
             player_index = obs.index
             player_goose = obs.geese[player_index]
-            player_head = player_goose[0]
-            player_head_row, player_head_column = row_col(
-                player_head, self.configuration.columns
-            )
-            self.grid[player_head_row, player_head_column] = 2
-            player_body = player_goose[1:]
-            rows, cols = [], []
-            for elt in player_body:
-                row, col = row_col(elt, self.configuration.columns)
-                rows.append(row)
-                cols.append(col)
-            self.grid[rows, cols] = 1
+            if len(player_goose) > 0:
+                player_head = player_goose[0]
+                player_head_row, player_head_column = row_col(
+                    player_head, self.configuration.columns
+                )
+                self.grid[player_head_row, player_head_column] = 2
+                if len(player_goose) > 1:
+                    player_body = player_goose[1:]
+                    rows, cols = [], []
+                    for elt in player_body:
+                        row, col = row_col(elt, self.configuration.columns)
+                        rows.append(row)
+                        cols.append(col)
+                    self.grid[rows, cols] = 1
+
             foods = obs.food
             for food in foods:
                 food_row, food_column = row_col(food, self.configuration.columns)
                 self.grid[food_row, food_column] = 3
             enemies = [obs.geese[i] for i in range(len(obs.geese)) if i != player_index]
-            rows, cols = [], []
-            for enemy in enemies:
-                for elt in enemy:
-                    row, col = row_col(elt, self.configuration.columns)
-                    rows.append(row)
-                    cols.append(col)
-            self.grid[rows, cols] = 1
+            if len(enemies) > 0:
+                rows, cols = [], []
+                for enemy in enemies:
+                    for elt in enemy:
+                        row, col = row_col(elt, self.configuration.columns)
+                        rows.append(row)
+                        cols.append(col)
+                self.grid[rows, cols] = -1
 
-            return self.grid.flatten(), reward, done, _
+            return self.grid.flatten().tolist(), reward, done, _
 
         def reset(self):
-            self.trainer.reset()
+            obs = self.trainer.reset()
+            self.grid = np.zeros(
+                (self.env.configuration["rows"], self.env.configuration["columns"])
+            )
+            obs = Observation(obs)
+            player_index = obs.index
+            player_goose = obs.geese[player_index]
+            if len(player_goose) > 0:
+                player_head = player_goose[0]
+                player_head_row, player_head_column = row_col(
+                    player_head, self.configuration.columns
+                )
+                self.grid[player_head_row, player_head_column] = 2
+                if len(player_goose) > 1:
+                    player_body = player_goose[1:]
+                    rows, cols = [], []
+                    for elt in player_body:
+                        row, col = row_col(elt, self.configuration.columns)
+                        rows.append(row)
+                        cols.append(col)
+                    self.grid[rows, cols] = 1
+
+            foods = obs.food
+            for food in foods:
+                food_row, food_column = row_col(food, self.configuration.columns)
+                self.grid[food_row, food_column] = 3
+            enemies = [obs.geese[i] for i in range(len(obs.geese)) if i != player_index]
+            if len(enemies) > 0:
+                rows, cols = [], []
+                for enemy in enemies:
+                    for elt in enemy:
+                        row, col = row_col(elt, self.configuration.columns)
+                        rows.append(row)
+                        cols.append(col)
+                self.grid[rows, cols] = -1
+
+            return self.grid.flatten().tolist()
 
         def close(self):
             pass
@@ -229,7 +302,7 @@ if __name__ == "__main__":
     environment = PseudoEnvGeese()
     observations = environment.configuration.columns * environment.configuration.rows
     num_actions = 4
-
+    actions_names = {i: action.name for i, action in enumerate(Action)}
     q_model = nn.Sequential(
         nn.Linear(in_features=observations, out_features=16),
         nn.ReLU(),
@@ -245,15 +318,19 @@ if __name__ == "__main__":
     bsz = 100
     num_ep = 1000
     max_size = bsz * 10
+
+    device = torch.device("cuda:0")
+    q_net = q_net.to(device)
     agent = DQN(
         env=environment,
         q_network=q_net,
         gamma=g,
         batch_size=bsz,
         optimizer=opt,
-        device=torch.device("cuda:0"),
+        device=device,
         num_episodes=num_ep,
         max_size_buffer=max_size,
+        action_map=actions_names,
     )
 
     agent.train()
