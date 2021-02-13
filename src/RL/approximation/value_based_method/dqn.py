@@ -111,7 +111,7 @@ class DQN:
                 steps += 1
                 observation_tensor = torch.tensor(
                     observation, dtype=torch.float, device=self.device
-                )
+                ).unsqueeze(0)
                 action = self.q_network.eps_greedy(observation_tensor, self.epsilon)
                 next_observation, reward, done, _ = self.env.step(action)
                 total_return += reward
@@ -151,7 +151,7 @@ class DQN:
                 observation = torch.tensor(
                     observation, dtype=torch.float, device=self.device
                 )
-                action = self.q_network.greedy(observation)
+                action = self.q_network.greedy(observation.unsqueeze(0))
                 observation, reward, done, _ = self.env.step(action)
                 episode_return += reward
             returns.append(episode_return)

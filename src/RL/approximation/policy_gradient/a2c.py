@@ -16,7 +16,7 @@ class ValueNetwork(nn.Module):
         self.model = model
 
     def forward(self, x):
-        return self.model(x)
+        return self.model(x).squeeze(0)
 
     def predict(self, x):
         return self(x).detach().numpy()[0]
@@ -28,7 +28,7 @@ class ActorNetwork(nn.Module):
         self.model = model
 
     def forward(self, x):
-        return self.model(x)
+        return self.model(x).squeeze(0)
 
     def select_action(self, x):
         return torch.multinomial(self.forward(x), 1).cpu().detach().numpy()
@@ -121,10 +121,14 @@ class A2CAgent:
             for i in range(batch_size):
                 observations[i] = observation
                 values[i] = self.value_network(
-                    torch.tensor(observation, dtype=torch.float, device=self.device)
+                    torch.tensor(
+                        observation, dtype=torch.float, device=self.device
+                    ).unsqueeze(0)
                 )
                 actions[i] = self.actor_network.select_action(
-                    torch.tensor(observation, dtype=torch.float, device=self.device)
+                    torch.tensor(
+                        observation, dtype=torch.float, device=self.device
+                    ).unsqueeze(0)
                 )
                 observation, rewards[i], dones[i], info = self.env.step(int(actions[i]))
                 if dones[i]:
@@ -135,7 +139,9 @@ class A2CAgent:
                 next_value = 0
             else:
                 next_value = self.value_network(
-                    torch.tensor(observation, dtype=torch.float, device=self.device)
+                    torch.tensor(
+                        observation, dtype=torch.float, device=self.device
+                    ).unsqueeze(0)
                 )
 
             # Update episode_count
@@ -168,7 +174,6 @@ class A2CAgent:
         returns = torch.tensor(returns[:, None], dtype=torch.float, device=self.device)
         advantages = torch.tensor(advantages, dtype=torch.float, device=self.device)
         observations = torch.tensor(observations, dtype=torch.float, device=self.device)
-
         # MSE for the values
         values = self.value_network(observations)
         loss_value = F.mse_loss(values, returns)
@@ -179,7 +184,9 @@ class A2CAgent:
         loss_actor = 0
         for t in range(len(observations)):
             loss_actor -= (
-                torch.log(self.actor_network(observations[t])[int(actions[t][1])])
+                torch.log(
+                    self.actor_network(observations[t].unsqueeze(0))[int(actions[t][1])]
+                )
                 * advantages[t]
                 / len(advantages)
             )
@@ -191,7 +198,9 @@ class A2CAgent:
     def evaluate(self):
         env = self.env
         observation = env.reset()
-        observation = torch.tensor(observation, dtype=torch.float, device=self.device)
+        observation = torch.tensor(
+            observation, dtype=torch.float, device=self.device
+        ).unsqueeze(0)
         reward_episode = 0
         done = False
 
@@ -201,7 +210,7 @@ class A2CAgent:
             observation, reward, done, info = env.step(int(action))
             observation = torch.tensor(
                 observation, dtype=torch.float, device=self.device
-            )
+            ).unsqueeze(0)
             reward_episode += reward
 
         env.close()
