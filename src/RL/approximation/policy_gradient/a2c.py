@@ -7,9 +7,7 @@ import torch
 from RL.utils import make_seed
 import torch.nn.functional as F
 import torch.nn as nn
-
-
-# TODO : use GPU
+from tqdm import tqdm
 
 
 class ValueNetwork(nn.Module):
@@ -33,7 +31,7 @@ class ActorNetwork(nn.Module):
         return self.model(x)
 
     def select_action(self, x):
-        return torch.multinomial(self.forward(x), 1).detach().numpy()
+        return torch.multinomial(self.forward(x), 1).cpu().detach().numpy()
 
 
 class A2CAgent:
@@ -46,16 +44,21 @@ class A2CAgent:
         actor_network,
         optimizer_value,
         optimizer_actor,
+        device,
+        obs_dim,
+        n_a,
     ):
 
         self.env = env
-        make_seed(seed)
-        self.env.seed(seed)
+        # make_seed(seed)
+        # self.env.seed(seed)
         self.gamma = gamma
-
+        self.obs_dim = obs_dim
+        self.n_a = n_a
         # Our two networks
-        self.value_network = value_network
-        self.actor_network = actor_network
+        self.value_network = value_network.to(device)
+        self.actor_network = actor_network.to(device)
+        self.device = device
 
         # Their optimizers
         self.value_network_optimizer = optimizer_value
@@ -109,21 +112,19 @@ class A2CAgent:
         actions = np.empty((batch_size,), dtype=np.int)
         dones = np.empty((batch_size,), dtype=np.bool)
         rewards, values = np.empty((2, batch_size), dtype=np.float)
-        observations = np.empty(
-            (batch_size,) + self.env.observation_space.shape, dtype=np.float
-        )
+        observations = np.empty((batch_size,) + self.obs_dim, dtype=np.float)
         observation = self.env.reset()
         rewards_test = []
-
-        for epoch in range(epochs):
+        tk = tqdm(range(epochs))
+        for epoch in tk:
             # Lets collect one batch
             for i in range(batch_size):
                 observations[i] = observation
                 values[i] = self.value_network(
-                    torch.tensor(observation, dtype=torch.float)
+                    torch.tensor(observation, dtype=torch.float, device=self.device)
                 )
                 actions[i] = self.actor_network.select_action(
-                    torch.tensor(observation, dtype=torch.float)
+                    torch.tensor(observation, dtype=torch.float, device=self.device)
                 )
                 observation, rewards[i], dones[i], info = self.env.step(int(actions[i]))
                 if dones[i]:
@@ -134,7 +135,7 @@ class A2CAgent:
                 next_value = 0
             else:
                 next_value = self.value_network(
-                    torch.tensor(observation, dtype=torch.float)
+                    torch.tensor(observation, dtype=torch.float, device=self.device)
                 )
 
             # Update episode_count
@@ -151,23 +152,22 @@ class A2CAgent:
             # Test it every 50 epochs
             if (epoch + 1) % 50 == 0 or epoch == epochs - 1:
                 rewards_test.append(np.array([self.evaluate() for _ in range(50)]))
-                print(
-                    f"Epoch {epoch}/{epochs}: Mean rewards: {round(rewards_test[-1].mean(), 2)}, Std: {round(rewards_test[-1].std(), 2)}"
-                )
 
-                # Early stopping
-                if rewards_test[-1].mean() > 490 and epoch != epochs - 1:
-                    print("Early stopping !")
-                    break
+                tk.set_postfix(
+                    {
+                        "Mean rewards": round(rewards_test[-1].mean(), 2),
+                        "Std": round(rewards_test[-1].std(), 2),
+                    }
+                )
                 observation = self.env.reset()
 
         print(f"The trainnig was done over a total of {episode_count} episodes")
 
     def optimize_model(self, observations, actions, returns, advantages):
-        actions = F.one_hot(torch.tensor(actions), self.env.action_space.n)
-        returns = torch.tensor(returns[:, None], dtype=torch.float)
-        advantages = torch.tensor(advantages, dtype=torch.float)
-        observations = torch.tensor(observations, dtype=torch.float)
+        actions = F.one_hot(torch.tensor(actions, device=self.device), self.n_a)
+        returns = torch.tensor(returns[:, None], dtype=torch.float, device=self.device)
+        advantages = torch.tensor(advantages, dtype=torch.float, device=self.device)
+        observations = torch.tensor(observations, dtype=torch.float, device=self.device)
 
         # MSE for the values
         values = self.value_network(observations)
@@ -191,7 +191,7 @@ class A2CAgent:
     def evaluate(self):
         env = self.env
         observation = env.reset()
-        observation = torch.tensor(observation, dtype=torch.float)
+        observation = torch.tensor(observation, dtype=torch.float, device=self.device)
         reward_episode = 0
         done = False
 
@@ -199,7 +199,9 @@ class A2CAgent:
             policy = self.actor_network(observation)
             action = torch.multinomial(policy, 1)
             observation, reward, done, info = env.step(int(action))
-            observation = torch.tensor(observation, dtype=torch.float)
+            observation = torch.tensor(
+                observation, dtype=torch.float, device=self.device
+            )
             reward_episode += reward
 
         env.close()
@@ -240,6 +242,7 @@ if __name__ == "__main__":
     value_network_optimizer = optim.RMSprop(value_network_.parameters(), lr=0.001)
     actor_network_optimizer = optim.RMSprop(actor_network_.parameters(), lr=0.001)
 
+    device = torch.device("cuda")
     agent = A2CAgent(
         env=environment,
         actor_network=actor_network_,
@@ -248,6 +251,8 @@ if __name__ == "__main__":
         seed=seed_,
         optimizer_actor=actor_network_optimizer,
         optimizer_value=value_network_optimizer,
+        device=device,
+        n_a=environment.action_space.n,
     )
 
     agent.training_batch(1000, 256)

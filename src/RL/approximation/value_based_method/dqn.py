@@ -65,10 +65,6 @@ class DQN:
         self.criterion = nn.MSELoss()
         self.epsilon = 0.1
         self.step_target = steps_target
-        if action_map is not None:
-            self.action_map = action_map
-        else:
-            action_map = [i for i in range(self.q_network.n_a)]
 
     def sample_from_buffer(self):
         if len(self.memory_buffer) >= self.batch_size:
@@ -117,9 +113,7 @@ class DQN:
                     observation, dtype=torch.float, device=self.device
                 )
                 action = self.q_network.eps_greedy(observation_tensor, self.epsilon)
-                next_observation, reward, done, _ = self.env.step(
-                    self.action_map[action]
-                )
+                next_observation, reward, done, _ = self.env.step(action)
                 total_return += reward
                 self.memory_buffer.append(
                     (observation, action, reward, next_observation, done)
@@ -158,7 +152,7 @@ class DQN:
                     observation, dtype=torch.float, device=self.device
                 )
                 action = self.q_network.greedy(observation)
-                observation, reward, done, _ = self.env.step(self.action_map[action])
+                observation, reward, done, _ = self.env.step(action)
                 episode_return += reward
             returns.append(episode_return)
             self.env.close()
@@ -217,12 +211,13 @@ if __name__ == "__main__":
                 (self.env.configuration["rows"], self.env.configuration["columns"])
             )
             self.configuration = Configuration(self.env.configuration)
+            self.action_map = {i: action.name for i, action in enumerate(Action)}
 
         def step(self, action):
             self.grid = np.zeros(
                 (self.env.configuration["rows"], self.env.configuration["columns"])
             )
-            obs, reward, done, _ = self.trainer.step(action)
+            obs, reward, done, _ = self.trainer.step(self.action_map[action])
             obs = Observation(obs)
             player_index = obs.index
             player_goose = obs.geese[player_index]
@@ -302,7 +297,6 @@ if __name__ == "__main__":
     environment = PseudoEnvGeese()
     observations = environment.configuration.columns * environment.configuration.rows
     num_actions = 4
-    actions_names = {i: action.name for i, action in enumerate(Action)}
     q_model = nn.Sequential(
         nn.Linear(in_features=observations, out_features=16),
         nn.ReLU(),
@@ -330,7 +324,6 @@ if __name__ == "__main__":
         device=device,
         num_episodes=num_ep,
         max_size_buffer=max_size,
-        action_map=actions_names,
     )
 
     agent.train()
