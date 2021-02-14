@@ -38,7 +38,6 @@ class A2CAgent:
     def __init__(
         self,
         env,
-        seed,
         gamma,
         value_network,
         actor_network,
@@ -63,8 +62,9 @@ class A2CAgent:
         # Their optimizers
         self.value_network_optimizer = optimizer_value
         self.actor_network_optimizer = optimizer_actor
+        self.best_state_dict = self.actor_network.state_dict()
+        self.best_average_reward = -float("inf")
 
-    # Hint: use it during training_batch
     def _returns_advantages(self, rewards, dones, values, next_value):
         """Returns the cumulative discounted rewards at each time step
 
@@ -120,16 +120,11 @@ class A2CAgent:
             # Lets collect one batch
             for i in range(batch_size):
                 observations[i] = observation
-                values[i] = self.value_network(
-                    torch.tensor(
-                        observation, dtype=torch.float, device=self.device
-                    ).unsqueeze(0)
-                )
-                actions[i] = self.actor_network.select_action(
-                    torch.tensor(
-                        observation, dtype=torch.float, device=self.device
-                    ).unsqueeze(0)
-                )
+                observation = torch.tensor(
+                    observation, dtype=torch.float, device=self.device
+                ).unsqueeze(0)
+                values[i] = self.value_network(observation)
+                actions[i] = self.actor_network.select_action(observation)
                 observation, rewards[i], dones[i], info = self.env.step(int(actions[i]))
                 if dones[i]:
                     observation = self.env.reset()
@@ -158,10 +153,14 @@ class A2CAgent:
             # Test it every 50 epochs
             if (epoch + 1) % 50 == 0 or epoch == epochs - 1:
                 rewards_test.append(np.array([self.evaluate() for _ in range(50)]))
+                mean_reward = round(rewards_test[-1].mean(), 2)
+                if mean_reward > self.best_average_reward:
+                    self.best_average_reward = mean_reward
+                    self.best_state_dict = self.actor_network.state_dict()
 
                 tk.set_postfix(
                     {
-                        "Mean rewards": round(rewards_test[-1].mean(), 2),
+                        "Mean rewards": mean_reward,
                         "Std": round(rewards_test[-1].std(), 2),
                     }
                 )
@@ -245,7 +244,6 @@ if __name__ == "__main__":
     value_network_ = ValueNetwork(value_model)
     actor_network_ = ActorNetwork(actor_model)
 
-    seed_ = 1
     gamma_ = 0.99
 
     value_network_optimizer = optim.RMSprop(value_network_.parameters(), lr=0.001)
@@ -257,7 +255,6 @@ if __name__ == "__main__":
         actor_network=actor_network_,
         value_network=value_network_,
         gamma=gamma_,
-        seed=seed_,
         optimizer_actor=actor_network_optimizer,
         optimizer_value=value_network_optimizer,
         device=device,
