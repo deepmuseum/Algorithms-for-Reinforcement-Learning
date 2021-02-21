@@ -12,7 +12,7 @@ class DDQN(DQN):
         device,
         num_episodes,
         max_size_buffer,
-        steps_target=5,
+        steps_target=1000,
     ):
 
         super().__init__(

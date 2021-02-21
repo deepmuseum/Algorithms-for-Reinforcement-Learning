@@ -178,6 +178,7 @@ class A2CAgent:
         loss_value = F.mse_loss(values, returns)
         self.value_network_optimizer.zero_grad()
         loss_value.backward()
+        torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
         self.value_network_optimizer.step()
         # Actor & Entropy loss
         loss_actor = 0
@@ -191,6 +192,7 @@ class A2CAgent:
             )
         self.actor_network_optimizer.zero_grad()
         loss_actor.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
         self.actor_network_optimizer.step()
         return loss_value, loss_actor
 

@@ -63,7 +63,7 @@ class DQN:
         self.device = device
         self.num_episodes = num_episodes
         self.criterion = nn.MSELoss()
-        self.epsilon = 0.1
+        self.epsilon = 1
         self.step_target = steps_target
 
     def sample_from_buffer(self):
@@ -101,8 +101,7 @@ class DQN:
     def train(self):
         tk = tqdm(range(self.num_episodes), unit="episode")
         for episode in tk:
-            # if (episode + 1) % (self.num_episodes // 10) == 0:
-            #     self.epsilon /= 2
+            
             observation = self.env.reset()
             done = False
             total_return = 0
@@ -125,13 +124,19 @@ class DQN:
                 loss = self.criterion(targets, values)
                 self.optimizer.zero_grad()
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1)
                 self.optimizer.step()
                 if steps == self.step_target:
                     self.copy_network.load_state_dict(self.q_network.state_dict())
                     steps = 0
                 observation = next_observation
 
-            if (episode + 1) % 10 == 0:
+            # decrease linearly epsilon the first 10 % episodes from 1 until .1
+            if (episode + 1) <= self.num_episodes // 10:
+                self.epsilon -= .9 / (self.num_episodes // 10)
+            else:
+                self.epsilon = .1  # just to be sure
+            if (episode + 1) % 1000 == 0:
                 returns = self.evaluate()
                 tk.set_postfix(
                     {
@@ -143,7 +148,7 @@ class DQN:
 
     def evaluate(self):
         returns = []
-        for i in range(10):
+        for i in range(100):
             observation = self.env.reset()
             done = False
             episode_return = 0
