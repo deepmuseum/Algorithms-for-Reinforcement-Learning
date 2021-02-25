@@ -3,8 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from RL.utils import make_seed
-
-# TODO : use GPU & use tqdm
+from tqdm import tqdm 
 
 
 class PolicyModel(nn.Module):
@@ -30,11 +29,8 @@ class PolicyModel(nn.Module):
         self.net = network
 
     def forward(self, state):
-        return self.net(state)
+        return self.net(state).squeeze(0)
 
-    def select_action(self, state):
-        action = torch.multinomial(self.forward(state), 1)
-        return action
 
 
 class REINFORCE:
@@ -54,18 +50,17 @@ class REINFORCE:
 
     """
 
-    def __init__(self, env, model, optimizer, seed, gamma):
+    def __init__(self, env, model, optimizer, seed, gamma, device):
 
         self.env = env
         make_seed(seed)
         self.env.seed(seed)
-        self.model = model
+        self.device = device
+        self.model = model.to(self.device)
         self.gamma = gamma
 
         self.optimizer = optimizer
-        # self.monitor_env = Monitor(env, "./gym-results", force=True, video_callable=lambda episode: True)
 
-    # Method to implement
     def _compute_returns(self, rewards):
         """Returns the cumulative discounted rewards at each time step
 
@@ -81,7 +76,7 @@ class REINFORCE:
 
         Example
         -------
-        for rewards=[1, 2, 3] this method outputs [1 + 2 * gamma + 3 * gamma**2, 2 + 3 * gamma, 3]
+        rewards = [1, 2, 3] this method outputs [1 + 2 * gamma + 3 * gamma**2, 2 + 3 * gamma, 3]
         """
         returns = []
         for t in range(len(rewards)):
@@ -91,6 +86,21 @@ class REINFORCE:
                 )
             )
         return np.array(returns)
+
+    def select_from_prob(self, dist):
+        """
+        Parameters
+        ----------
+        dist: torch.Tensor
+             representing a prob distribution
+        
+        Returns
+        -------
+        action: int
+            index of an action
+        """
+        action = int(torch.multinomial(dist, 1))
+        return action
 
     def optimize_step(self, n_trajectories):
         """
@@ -106,22 +116,23 @@ class REINFORCE:
         array
             The cumulative discounted rewards of each trajectory
         """
-        reward_trajectories = []
-        loss = torch.tensor(0, dtype=torch.float)
+        return_trajectories = []
+        loss = torch.tensor(0, dtype=torch.float, device=self.device)
         for i in range(n_trajectories):
             rewards = []
             observation = self.env.reset()
             policy = []
             done = False
             while not done:
-                observation = torch.tensor(observation, dtype=torch.float)
-                action = self.model.select_action(observation)
-                proba = self.model(observation)[int(action)]
+                observation = torch.tensor(observation, dtype=torch.float, device=self.device).unsqueeze(0)
+                prob_dist = self.model(observation).squeeze(0)
+                action = self.select_from_prob(prob_dist)
+                proba = prob_dist[action]
                 policy.append(proba)
-                observation, reward, done, info = self.env.step(int(action))
+                observation, reward, done, info = self.env.step(action)
                 rewards.append(reward)
             returns = self._compute_returns(rewards)
-            reward_trajectories.append(returns[0])
+            return_trajectories.append(returns[0])
 
             for t in range(len(rewards)):
                 # pseudo loss
@@ -130,7 +141,7 @@ class REINFORCE:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        return np.array(reward_trajectories)
+        return np.array(return_trajectories)
 
     def train(self, n_trajectories, n_update):
         """Training method
@@ -143,13 +154,10 @@ class REINFORCE:
             The number of gradient updates
 
         """
-
-        rewards = []
-        for episode in range(n_update):
-            rewards.append(self.optimize_step(n_trajectories))
-            print(
-                f"Episode {episode + 1}/{n_update}: rewards {round(rewards[-1].mean(), 2)} +/- {round(rewards[-1].std(), 2)}"
-            )
+        tk = tqdm(range(n_update))
+        for episode in tk:
+            returns = self.optimize_step(n_trajectories)
+            tk.set_postfix({"mean reward": round(returns.mean(), 2), "std": round(returns.std(), 2)})
 
     def evaluate(self):
         """
@@ -158,12 +166,12 @@ class REINFORCE:
         pass
 
 
-class BaselineReinforce(REINFORCE):
+class REINFORCEWithBaseline(REINFORCE):
     def __init__(
-        self, env, model, optimizer_policy, seed, gamma, value_network, optimizer_value
+        self, env, model, optimizer_policy, seed, gamma, device, value_network, optimizer_value
     ):
-        super().__init__(env, model, optimizer_policy, seed, gamma)
-        self.value_network = value_network
+        super().__init__(env, model, optimizer_policy, seed, gamma, device)
+        self.value_network = value_network.to(self.device)
         self.optimizer_value = optimizer_value
         self.criterion_value = nn.MSELoss()
 
@@ -183,8 +191,8 @@ class BaselineReinforce(REINFORCE):
         """
         reward_trajectories = []
         loss_policy, loss_value = (
-            torch.tensor(0, dtype=torch.float),
-            torch.tensor(0, dtype=torch.float),
+            torch.tensor(0, dtype=torch.float, device=self.device),
+            torch.tensor(0, dtype=torch.float, device=self.device),
         )
         for i in range(n_trajectories):
             rewards = []
@@ -193,10 +201,11 @@ class BaselineReinforce(REINFORCE):
             state_values = []
             done = False
             while not done:
-                observation = torch.tensor(observation, dtype=torch.float)
-                state_values.append(self.value_network(observation))
-                action = self.model.select_action(observation)
-                proba = self.model(observation)[int(action)]
+                observation = torch.tensor(observation, dtype=torch.float, device=self.device).unsqueeze(0)
+                state_values.append(self.value_network(observation).squeeze(0))
+                prob_dist = self.model(observation).squeeze(0)
+                action = self.select_from_prob(prob_dist)
+                proba = prob_dist[action]
                 policy.append(proba)
                 observation, reward, done, info = self.env.step(int(action))
                 rewards.append(reward)
@@ -213,7 +222,7 @@ class BaselineReinforce(REINFORCE):
                 )
                 loss_value += self.gamma ** t * (
                     self.criterion_value(
-                        torch.tensor([returns[t]], dtype=torch.float), state_values[t]
+                        torch.tensor([returns[t]], dtype=torch.float, device=self.device), state_values[t]
                     )
                     / n_trajectories
                 )
@@ -243,7 +252,7 @@ if __name__ == "__main__":
         nn.Linear(in_features=16, out_features=8),
         nn.ReLU(),
         nn.Linear(in_features=8, out_features=actions),
-        nn.Softmax(dim=0),
+        nn.Softmax(dim=1),
     )
 
     net_value = nn.Sequential(
@@ -259,18 +268,20 @@ if __name__ == "__main__":
     opt_policy = optim.Adam(net_policy.parameters(), lr=0.01)
     opt_value = optim.Adam(net_value.parameters(), lr=0.01)
 
-    agent = REINFORCE(
-        env=environment, model=policy_model, gamma=1, seed=0, optimizer=opt_policy
-    )
-
-    # agent = BaselineReinforce(
-    #     env=environment,
-    #     model=policy_model,
-    #     gamma=1,
-    #     seed=0,
-    #     optimizer_policy=opt_policy,
-    #     optimizer_value=opt_value,
-    #     value_network=net_value,
+    device = torch.device('cuda')
+    # agent = REINFORCE(
+    #     env=environment, model=policy_model, gamma=1, seed=0, optimizer=opt_policy, device=device
     # )
 
-    agent.train(n_trajectories=50, n_update=50)
+    agent = REINFORCEWithBaseline(
+        env=environment,
+        model=policy_model,
+        gamma=1,
+        seed=0,
+        optimizer_policy=opt_policy,
+        optimizer_value=opt_value,
+        value_network=net_value,
+        device=device
+    )
+
+    agent.train(n_trajectories=100, n_update=100)

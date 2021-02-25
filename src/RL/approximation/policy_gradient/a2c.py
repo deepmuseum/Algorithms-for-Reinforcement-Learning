@@ -8,6 +8,7 @@ from RL.utils import make_seed
 import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
+from copy import deepcopy as c
 
 
 class ValueNetwork(nn.Module):
@@ -30,8 +31,11 @@ class ActorNetwork(nn.Module):
     def forward(self, x):
         return self.model(x).squeeze(0)
 
-    def select_action(self, x):
-        return torch.multinomial(self.forward(x), 1).cpu().detach().numpy()
+    def select_action(self, x, epsilon, num_actions):
+        if np.random.uniform() <= epsilon:
+            return torch.multinomial(self.forward(x), 1).cpu().detach().numpy()
+        else:
+            return np.random.choice(range(num_actions))
 
 
 class A2CAgent:
@@ -46,8 +50,9 @@ class A2CAgent:
         device,
         obs_dim,
         n_a,
+        epsilon=.5
     ):
-
+        self.epsilon = epsilon
         self.env = env
         # make_seed(seed)
         # self.env.seed(seed)
@@ -62,7 +67,7 @@ class A2CAgent:
         # Their optimizers
         self.value_network_optimizer = optimizer_value
         self.actor_network_optimizer = optimizer_actor
-        self.best_state_dict = self.actor_network.state_dict()
+        self.best_state_dict = c(self.actor_network.state_dict())
         self.best_average_reward = -float("inf")
 
     def _returns_advantages(self, rewards, dones, values, next_value):
@@ -124,7 +129,7 @@ class A2CAgent:
                     observation, dtype=torch.float, device=self.device
                 ).unsqueeze(0)
                 values[i] = self.value_network(observation)
-                actions[i] = self.actor_network.select_action(observation)
+                actions[i] = self.actor_network.select_action(observation, self.epsilon, self.n_a)
                 observation, rewards[i], dones[i], info = self.env.step(int(actions[i]))
                 if dones[i]:
                     observation = self.env.reset()
@@ -152,11 +157,11 @@ class A2CAgent:
 
             # Test it every 50 epochs
             if (epoch + 1) % 50 == 0 or epoch == epochs - 1:
-                rewards_test.append(np.array([self.evaluate() for _ in range(50)]))
+                rewards_test.append(np.array([self.evaluate() for _ in range(100)]))
                 mean_reward = round(rewards_test[-1].mean(), 2)
                 if mean_reward > self.best_average_reward:
                     self.best_average_reward = mean_reward
-                    self.best_state_dict = self.actor_network.state_dict()
+                    self.best_state_dict = c(self.actor_network.state_dict())
 
                 tk.set_postfix(
                     {
@@ -207,7 +212,7 @@ class A2CAgent:
 
         while not done:
             policy = self.actor_network(observation)
-            action = torch.multinomial(policy, 1)
+            action = policy.argmax(dim=-1)
             observation, reward, done, info = env.step(int(action))
             observation = torch.tensor(
                 observation, dtype=torch.float, device=self.device

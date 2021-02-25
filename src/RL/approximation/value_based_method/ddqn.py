@@ -13,6 +13,8 @@ class DDQN(DQN):
         num_episodes,
         max_size_buffer,
         steps_target=1000,
+        evaluate_every=5000,
+        exploration=.1
     ):
 
         super().__init__(
@@ -25,6 +27,8 @@ class DDQN(DQN):
             num_episodes,
             max_size_buffer,
             steps_target,
+            evaluate_every=evaluate_every,
+            exploration=exploration
         )
 
     def choose_optimal_actions(self, states):
