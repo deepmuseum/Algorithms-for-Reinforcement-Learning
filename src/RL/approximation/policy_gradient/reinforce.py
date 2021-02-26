@@ -50,15 +50,13 @@ class REINFORCE:
 
     """
 
-    def __init__(self, env, model, optimizer, seed, gamma, device):
+    def __init__(self, env, model, optimizer, gamma, device):
 
         self.env = env
-        make_seed(seed)
-        self.env.seed(seed)
         self.device = device
         self.model = model.to(self.device)
         self.gamma = gamma
-
+        # self.epsilon = -1
         self.optimizer = optimizer
 
     def _compute_returns(self, rewards):
@@ -99,7 +97,9 @@ class REINFORCE:
         action: int
             index of an action
         """
+        # if np.random.uniform() >= self.epsilon: 
         action = int(torch.multinomial(dist, 1))
+        # action = np.random.choice(range(self.model.n_actions))
         return action
 
     def optimize_step(self, n_trajectories):
@@ -140,6 +140,7 @@ class REINFORCE:
         self.env.close()
         self.optimizer.zero_grad()
         loss.backward()
+        torch.utils.clip_grad_norm_(self.model.parameters(), 1)
         self.optimizer.step()
         return np.array(return_trajectories)
 
@@ -154,23 +155,39 @@ class REINFORCE:
             The number of gradient updates
 
         """
-        tk = tqdm(range(n_update))
-        for episode in tk:
-            returns = self.optimize_step(n_trajectories)
-            tk.set_postfix({"mean reward": round(returns.mean(), 2), "std": round(returns.std(), 2)})
+        tk = tqdm(range(n_update), unit="update")
+        for update in tk:
+            # self.epsilon = max(0.9 - update * 0.001, 0.0)
+            self.optimize_step(n_trajectories)
+            if (update + 1) % 100 == 0:
+                returns = self.evaluate()
+                tk.set_postfix({"mean reward": round(returns.mean(), 2), "std": round(returns.std(), 2)})
 
     def evaluate(self):
         """
-        Evaluate the agent on a single trajectory
+        Evaluate the agent on a 50 trajectory
         """
-        pass
+        returns = []
+        for _ in range(50):
+            done = False
+            observation = self.env.reset()
+            r = 0
+            while not done:
+                observation = torch.tensor(observation, dtype=torch.float, device=self.device).unsqueeze(0)
+                with torch.no_grad():
+                    prob_dist = self.model(observation).squeeze(0)
+                action = int(torch.argmax(prob_dist))
+                observation, reward, done, info = self.env.step(action)
+                r += reward
+            returns.append(r)
+        return np.array(returns)
 
 
 class REINFORCEWithBaseline(REINFORCE):
     def __init__(
-        self, env, model, optimizer_policy, seed, gamma, device, value_network, optimizer_value
+        self, env, model, optimizer_policy, gamma, device, value_network, optimizer_value
     ):
-        super().__init__(env, model, optimizer_policy, seed, gamma, device)
+        super().__init__(env, model, optimizer_policy, gamma, device)
         self.value_network = value_network.to(self.device)
         self.optimizer_value = optimizer_value
         self.criterion_value = nn.MSELoss()
@@ -214,7 +231,6 @@ class REINFORCEWithBaseline(REINFORCE):
 
             for t in range(len(rewards)):
                 # pseudo loss
-
                 loss_policy -= self.gamma ** t * (
                     torch.log(policy[t])
                     * (returns[t] - state_values[t].item())
@@ -232,8 +248,11 @@ class REINFORCEWithBaseline(REINFORCE):
         self.optimizer_value.zero_grad()
 
         loss_policy.backward()
+        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
         loss_value.backward()
+        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
         self.optimizer.step()
+        self.optimizer_value.step()
         return np.array(reward_trajectories)
 
 
@@ -249,8 +268,10 @@ if __name__ == "__main__":
     net_policy = nn.Sequential(
         nn.Linear(in_features=observations, out_features=16),
         nn.ReLU(),
+        nn.BatchNorm(16),
         nn.Linear(in_features=16, out_features=8),
         nn.ReLU(),
+        nn.BatchNorm(8),
         nn.Linear(in_features=8, out_features=actions),
         nn.Softmax(dim=1),
     )
@@ -277,7 +298,6 @@ if __name__ == "__main__":
         env=environment,
         model=policy_model,
         gamma=1,
-        seed=0,
         optimizer_policy=opt_policy,
         optimizer_value=opt_value,
         value_network=net_value,

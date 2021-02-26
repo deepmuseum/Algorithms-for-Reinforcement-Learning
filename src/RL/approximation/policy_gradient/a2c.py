@@ -50,12 +50,10 @@ class A2CAgent:
         device,
         obs_dim,
         n_a,
-        epsilon=.5
     ):
-        self.epsilon = epsilon
+
+        # self.epsilon = -1
         self.env = env
-        # make_seed(seed)
-        # self.env.seed(seed)
         self.gamma = gamma
         self.obs_dim = obs_dim
         self.n_a = n_a
@@ -63,7 +61,6 @@ class A2CAgent:
         self.value_network = value_network.to(device)
         self.actor_network = actor_network.to(device)
         self.device = device
-
         # Their optimizers
         self.value_network_optimizer = optimizer_value
         self.actor_network_optimizer = optimizer_actor
@@ -103,6 +100,24 @@ class A2CAgent:
         advantages = returns - values
         return returns, advantages
 
+    def select_from_prob(self, dist):
+        """
+        Parameters
+        ----------
+        dist: torch.Tensor
+             representing a prob distribution
+        
+        Returns
+        -------
+        action: int
+            index of an action
+        """
+        # if np.random.uniform() >= self.epsilon: 
+        action = int(torch.multinomial(dist, 1))
+        # else:
+        #     action = np.random.choice(range(self.n_a))
+        return action
+
     def training_batch(self, epochs, batch_size):
         """Perform a training by batch
 
@@ -129,8 +144,11 @@ class A2CAgent:
                     observation, dtype=torch.float, device=self.device
                 ).unsqueeze(0)
                 values[i] = self.value_network(observation)
-                actions[i] = self.actor_network.select_action(observation, self.epsilon, self.n_a)
-                observation, rewards[i], dones[i], info = self.env.step(int(actions[i]))
+                # self.epsilon = max(0.9 - epoch * 0.001, 0.0)
+                dist_prob = self.actor_network(observation)
+                action = self.select_from_prob(dist_prob)
+                actions[i] = action
+                observation, rewards[i], dones[i], info = self.env.step(action)
                 if dones[i]:
                     observation = self.env.reset()
 
@@ -174,7 +192,6 @@ class A2CAgent:
         print(f"The trainnig was done over a total of {episode_count} episodes")
 
     def optimize_model(self, observations, actions, returns, advantages):
-        actions = F.one_hot(torch.tensor(actions, device=self.device), self.n_a)
         returns = torch.tensor(returns[:, None], dtype=torch.float, device=self.device)
         advantages = torch.tensor(advantages, dtype=torch.float, device=self.device)
         observations = torch.tensor(observations, dtype=torch.float, device=self.device)
@@ -183,21 +200,21 @@ class A2CAgent:
         loss_value = F.mse_loss(values, returns)
         self.value_network_optimizer.zero_grad()
         loss_value.backward()
-        torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
+        # torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
         self.value_network_optimizer.step()
         # Actor & Entropy loss
         loss_actor = 0
         for t in range(len(observations)):
             loss_actor -= (
                 torch.log(
-                    self.actor_network(observations[t].unsqueeze(0))[int(actions[t][1])]
+                    self.actor_network(observations[t].unsqueeze(0))[actions[t]]
                 )
                 * advantages[t]
                 / len(advantages)
             )
         self.actor_network_optimizer.zero_grad()
         loss_actor.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
+        # torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
         self.actor_network_optimizer.step()
         return loss_value, loss_actor
 
@@ -211,7 +228,8 @@ class A2CAgent:
         done = False
 
         while not done:
-            policy = self.actor_network(observation)
+            with torch.no_grad():
+                policy = self.actor_network(observation)
             action = policy.argmax(dim=-1)
             observation, reward, done, info = env.step(int(action))
             observation = torch.tensor(
