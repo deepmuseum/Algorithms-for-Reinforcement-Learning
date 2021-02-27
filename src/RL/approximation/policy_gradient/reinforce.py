@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from RL.utils import make_seed
 from tqdm import tqdm 
+from copy import deepcopy as c
+import pickle 
 
 
 class PolicyModel(nn.Module):
@@ -50,14 +52,18 @@ class REINFORCE:
 
     """
 
-    def __init__(self, env, model, optimizer, gamma, device):
-
+    def __init__(self, env, model, optimizer, gamma, device, path, test_every):
         self.env = env
         self.device = device
         self.model = model.to(self.device)
         self.gamma = gamma
-        # self.epsilon = -1
+        self.epsilon = -1
         self.optimizer = optimizer
+        self.best_return = - float("inf") 
+        self.best_state_dict = c(self.model.cpu().state_dict())
+        self.model.to(self.device)
+        self.path = path
+        self.test_every = test_every
 
     def _compute_returns(self, rewards):
         """Returns the cumulative discounted rewards at each time step
@@ -97,9 +103,10 @@ class REINFORCE:
         action: int
             index of an action
         """
-        # if np.random.uniform() >= self.epsilon: 
-        action = int(torch.multinomial(dist, 1))
-        # action = np.random.choice(range(self.model.n_actions))
+        if np.random.uniform() >= self.epsilon: 
+            action = int(torch.multinomial(dist, 1))
+        else:
+            action = np.random.choice(range(self.model.n_actions))
         return action
 
     def optimize_step(self, n_trajectories):
@@ -140,7 +147,7 @@ class REINFORCE:
         self.env.close()
         self.optimizer.zero_grad()
         loss.backward()
-        torch.utils.clip_grad_norm_(self.model.parameters(), 1)
+        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
         self.optimizer.step()
         return np.array(return_trajectories)
 
@@ -157,11 +164,16 @@ class REINFORCE:
         """
         tk = tqdm(range(n_update), unit="update")
         for update in tk:
-            # self.epsilon = max(0.9 - update * 0.001, 0.0)
+            self.epsilon = max(0.9 - update * 0.001, 0.0)
             self.optimize_step(n_trajectories)
-            if (update + 1) % 100 == 0:
-                returns = self.evaluate()
-                tk.set_postfix({"mean reward": round(returns.mean(), 2), "std": round(returns.std(), 2)})
+            if (update + 1) % self.test_every == 0:
+                  returns = self.evaluate()
+                  tk.set_postfix({"mean reward": round(returns.mean(), 2), "std": round(returns.std(), 2)})
+                  if returns.mean() >= self.best_return:
+                      self.best_return = returns.mean()
+                      self.best_state_dict = c(self.model.cpu().state_dict())
+                      self.model.to(self.device)
+                      pickle.dump(self.best_state_dict, open(self.path, "wb"))
 
     def evaluate(self):
         """

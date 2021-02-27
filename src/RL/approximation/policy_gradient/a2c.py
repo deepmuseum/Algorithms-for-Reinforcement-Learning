@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
 from copy import deepcopy as c
+import pickle
 
 
 class ValueNetwork(nn.Module):
@@ -50,9 +51,13 @@ class A2CAgent:
         device,
         obs_dim,
         n_a,
+        path,
+        test_every
     ):
-
-        # self.epsilon = -1
+    
+        self.test_every = test_every
+        self.path = path
+        self.epsilon = -1
         self.env = env
         self.gamma = gamma
         self.obs_dim = obs_dim
@@ -64,7 +69,8 @@ class A2CAgent:
         # Their optimizers
         self.value_network_optimizer = optimizer_value
         self.actor_network_optimizer = optimizer_actor
-        self.best_state_dict = c(self.actor_network.state_dict())
+        self.best_state_dict = c(self.actor_network.cpu().state_dict())
+        self.actor_network.to(self.device)
         self.best_average_reward = -float("inf")
 
     def _returns_advantages(self, rewards, dones, values, next_value):
@@ -112,10 +118,10 @@ class A2CAgent:
         action: int
             index of an action
         """
-        # if np.random.uniform() >= self.epsilon: 
-        action = int(torch.multinomial(dist, 1))
-        # else:
-        #     action = np.random.choice(range(self.n_a))
+        if np.random.uniform() >= self.epsilon: 
+            action = int(torch.multinomial(dist, 1))
+        else:
+            action = np.random.choice(range(self.n_a))
         return action
 
     def training_batch(self, epochs, batch_size):
@@ -144,7 +150,7 @@ class A2CAgent:
                     observation, dtype=torch.float, device=self.device
                 ).unsqueeze(0)
                 values[i] = self.value_network(observation)
-                # self.epsilon = max(0.9 - epoch * 0.001, 0.0)
+                self.epsilon = max(0.9 - epoch * 0.001, 0.0)
                 dist_prob = self.actor_network(observation)
                 action = self.select_from_prob(dist_prob)
                 actions[i] = action
@@ -174,12 +180,14 @@ class A2CAgent:
             self.optimize_model(observations, actions, returns, advantages)
 
             # Test it every 50 epochs
-            if (epoch + 1) % 50 == 0 or epoch == epochs - 1:
+            if (epoch + 1) % self.test_every == 0 or epoch == epochs - 1:
                 rewards_test.append(np.array([self.evaluate() for _ in range(100)]))
                 mean_reward = round(rewards_test[-1].mean(), 2)
                 if mean_reward > self.best_average_reward:
                     self.best_average_reward = mean_reward
-                    self.best_state_dict = c(self.actor_network.state_dict())
+                    self.best_state_dict = c(self.actor_network.cpu().state_dict())
+                    self.actor_network.to(self.device)
+                    pickle.dump(self.best_state_dict, open(self.path, "wb"))
 
                 tk.set_postfix(
                     {
