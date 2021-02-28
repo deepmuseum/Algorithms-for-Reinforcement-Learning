@@ -14,12 +14,6 @@ class QNetwork(nn.Module):
     def forward(self, state):
         return self.model(state)
 
-    def compute_targets(self, rewards, gamma, states, optimal_actions, dones):
-        values = self.forward(states)
-        return rewards + (1 - dones) * gamma * values.gather(
-            1, optimal_actions.unsqueeze(-1)
-        ).squeeze(-1)
-
     def eps_greedy(self, state, epsilon):
         if np.random.uniform() <= epsilon:
             return np.random.randint(self.n_a)
@@ -50,8 +44,7 @@ class DQN:
         max_size_buffer,
         steps_target=10,
         evaluate_every=1000,
-        action_map=None,
-        exploration=.1
+        exploration=0.1,
     ):
         self.exploration = exploration
         self.evaluate_every = evaluate_every
@@ -70,7 +63,7 @@ class DQN:
         self.step_target = steps_target
         self.best_return = 0
         self.best_state_dict = c(self.q_network.state_dict())
-        
+
     def sample_from_buffer(self):
         if len(self.memory_buffer) >= self.batch_size:
             indices = np.random.choice(
@@ -80,9 +73,12 @@ class DQN:
         else:
             return self.memory_buffer
 
-    def choose_optimal_actions(self, states):
+    def compute_targets(self, rewards, states, dones):
         values = self.copy_network(states)
-        return values.argmax(dim=1)
+        optimal_actions = values.argmax(dim=-1)
+        return rewards + (1 - dones) * self.gamma * values.gather(
+            1, optimal_actions.unsqueeze(-1)
+        ).squeeze(-1)
 
     def build_targets_values(self, examples):
         states, actions, rewards, next_observations, dones = zip(*examples)
@@ -97,19 +93,15 @@ class DQN:
         next_observations = torch.tensor(
             next_observations, dtype=torch.float, device=self.device
         )
-        optimal_next_actions = self.choose_optimal_actions(next_observations)
-        targets = self.copy_network.compute_targets(
-            rewards, self.gamma, next_observations, optimal_next_actions, dones
-        )
+        targets = self.compute_targets(rewards, next_observations, dones)
         return targets, values
 
     def train(self):
         tk = tqdm(range(self.num_episodes), unit="episode")
         for episode in tk:
-            
+
             observation = self.env.reset()
             done = False
-            total_return = 0
             steps = 0
             while not done:
                 steps += 1
@@ -118,7 +110,6 @@ class DQN:
                 ).unsqueeze(0)
                 action = self.q_network.eps_greedy(observation_tensor, self.epsilon)
                 next_observation, reward, done, _ = self.env.step(action)
-                total_return += reward
                 self.memory_buffer.append(
                     (observation, action, reward, next_observation, done)
                 )
@@ -136,24 +127,21 @@ class DQN:
                     steps = 0
                 observation = next_observation
 
-            # decrease linearly epsilon the first 15 % episodes from 1 until .1
+            # decrease linearly epsilon the first x % episodes from 1 until .1
             if (episode + 1) <= int(self.num_episodes * self.exploration):
-                self.epsilon -= .9 / int(self.num_episodes * self.exploration)
+                self.epsilon -= 0.9 / int(self.num_episodes * self.exploration)
             else:
-                self.epsilon = .1  # just to be sure
+                self.epsilon = 0.1  # just to be sure
             if (episode + 1) % self.evaluate_every == 0:
                 returns = self.evaluate()
                 mean = np.mean(returns)
                 tk.set_postfix(
-                    {
-                        f"mean return": mean,
-                        "standard deviation": np.std(returns),
-                    }
+                    {f"mean return": mean, "standard deviation": np.std(returns)}
                 )
                 if mean >= self.best_return:
                     self.best_return = mean
                     self.best_state_dict = c(self.q_network.state_dict())
-                    
+
             self.env.close()
 
     def evaluate(self):
@@ -175,5 +163,44 @@ class DQN:
 
 
 if __name__ == "__main__":
+    from torch import optim
+    import gym
 
-    pass
+    environment = gym.make("CartPole-v1")
+
+    value_net = nn.Sequential(
+        nn.Linear(environment.observation_space.shape[0], 16),
+        nn.ReLU(),
+        nn.Linear(16, 16),
+        nn.ReLU(),
+        nn.Linear(16, environment.action_space.n),
+    )
+
+    q_net = QNetwork(value_net, environment.action_space.n)
+
+    gamma_ = 0.99
+    optimizer_ = optim.Adam(q_net.parameters(), lr=0.001)
+
+    device_ = torch.device("cpu")
+    bsz = 100
+    num_ep = 1000
+    max_size = bsz * 10
+    steps_target_ = 10
+    evaluate_every_ = 100
+    exploration_ = 0.1
+
+    agent = DQN(
+        env=environment,
+        q_network=q_net,
+        optimizer=optimizer_,
+        device=device_,
+        gamma=gamma_,
+        num_episodes=num_ep,
+        max_size_buffer=max_size,
+        batch_size=bsz,
+        evaluate_every=evaluate_every_,
+        exploration=exploration_,
+        steps_target=steps_target_,
+    )
+
+    agent.train()

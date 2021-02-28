@@ -4,7 +4,6 @@ Implementation of A2C
 
 import numpy as np
 import torch
-from RL.utils import make_seed
 import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
@@ -52,9 +51,9 @@ class A2CAgent:
         obs_dim,
         n_a,
         path,
-        test_every
+        test_every,
     ):
-    
+
         self.test_every = test_every
         self.path = path
         self.epsilon = -1
@@ -112,13 +111,13 @@ class A2CAgent:
         ----------
         dist: torch.Tensor
              representing a prob distribution
-        
+
         Returns
         -------
         action: int
             index of an action
         """
-        if np.random.uniform() >= self.epsilon: 
+        if np.random.uniform() >= self.epsilon:
             action = int(torch.multinomial(dist, 1))
         else:
             action = np.random.choice(range(self.n_a))
@@ -214,9 +213,7 @@ class A2CAgent:
         loss_actor = 0
         for t in range(len(observations)):
             loss_actor -= (
-                torch.log(
-                    self.actor_network(observations[t].unsqueeze(0))[actions[t]]
-                )
+                torch.log(self.actor_network(observations[t].unsqueeze(0))[actions[t]])
                 * advantages[t]
                 / len(advantages)
             )
