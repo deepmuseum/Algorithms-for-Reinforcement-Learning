@@ -20,6 +20,7 @@ class Sarsa(DQN):
         steps_target,
         evaluate_every,
         exploration,
+        path,
     ):
 
         super().__init__(
@@ -34,6 +35,7 @@ class Sarsa(DQN):
             evaluate_every=evaluate_every,
             exploration=exploration,
             steps_target=steps_target,
+            path=path,
         )
 
     def train(self):

@@ -18,6 +18,8 @@ class ExpectedSarsa(DQN):
         steps_target,
         evaluate_every,
         exploration,
+        path,
+        num_agents=1,
     ):
 
         super().__init__(
@@ -32,6 +34,8 @@ class ExpectedSarsa(DQN):
             evaluate_every=evaluate_every,
             exploration=exploration,
             steps_target=steps_target,
+            path=path,
+            num_agents=num_agents,
         )
 
     def compute_targets(self, rewards, states, dones):

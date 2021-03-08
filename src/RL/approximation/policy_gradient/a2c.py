@@ -275,7 +275,7 @@ if __name__ == "__main__":
         n_a=environment.action_space.n,
         path=None,
         test_every=100,
-        epochs=2000,
+        epochs=1000,
         batch_size=32,
     )
 
