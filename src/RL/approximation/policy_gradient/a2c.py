@@ -11,8 +11,6 @@ from copy import deepcopy as c
 import pickle
 import torch.distributions as torch_dist
 
-# TODO : multi-agent training
-
 
 class ValueNetwork(nn.Module):
     def __init__(self, model):
@@ -34,11 +32,8 @@ class ActorNetwork(nn.Module):
     def forward(self, x):
         return self.model(x).squeeze(0)
 
-    def select_action(self, x, epsilon, num_actions):
-        if np.random.uniform() <= epsilon:
-            return torch.multinomial(self.forward(x), 1).cpu().detach().numpy()
-        else:
-            return np.random.choice(range(num_actions))
+    def select_action(self, x):
+        return torch.multinomial(self.forward(x), 1).cpu().detach().numpy()
 
 
 class A2CAgent:
@@ -57,13 +52,13 @@ class A2CAgent:
         batch_size,
         entropy_coeff=0.1,
         coeff_loss_value=0.1,
+        num_agents=1,
     ):
 
         self.epochs = epochs
         self.batch_size = batch_size
         self.test_every = test_every
         self.path = path
-        self.epsilon = -1
         self.env = env
         self.gamma = gamma
         self.n_a = n_a
@@ -78,23 +73,24 @@ class A2CAgent:
         self.best_average_reward = -float("inf")
         self.entropy_coeff = entropy_coeff
         self.coeff_loss_value = coeff_loss_value
+        self.num_agents = num_agents
 
     def _returns_advantages(self, rewards, dones, values, next_value):
         """
         """
         # Mnih et al (2016) estimator of the advantage
-        targets = torch.zeros(self.batch_size, device=self.device)
+        targets = torch.zeros((self.batch_size, self.num_agents), device=self.device)
         i = 0
         for i in range(self.batch_size):
             targets[i] = rewards[i]
-            if dones[i]:
+            if all(dones[i]):
                 continue
             for j in range(i + 1, self.batch_size):
-                targets[i] += self.gamma ** (j - i) * rewards[j]
-                if dones[j]:
+                targets[i] += (1 - dones[j]) * self.gamma ** (j - i) * rewards[j]
+                if all(dones[j]):
                     break
-            if j == self.batch_size - 1 and not dones[j]:
-                targets[i] += self.gamma ** (j + 1 - i) * next_value
+            if j == self.batch_size - 1 and not all(dones[j]):
+                targets[i] += (1 - dones[j]) * self.gamma ** (j + 1 - i) * next_value
 
         advantages = (targets - values).detach()
 
@@ -125,7 +121,7 @@ class A2CAgent:
         action: int
             index of an action
         """
-        action = int(torch.multinomial(dist, 1))
+        action = torch.multinomial(dist, 1).squeeze(-1).tolist()
         return action
 
     def train(self):
@@ -135,7 +131,6 @@ class A2CAgent:
         episode_count = 0
 
         observation = self.env.reset()
-        rewards_test = []
         tk = tqdm(range(self.epochs))
         for epoch in tk:
             # Lets collect one batch
@@ -144,61 +139,80 @@ class A2CAgent:
             rewards = []
             observations = []
             for i in range(self.batch_size):
+                if self.num_agents == 1:
+                    observation = [observation]
                 observation = torch.tensor(
                     observation, dtype=torch.float, device=self.device
-                ).unsqueeze(0)
+                ).unsqueeze(
+                    0
+                )  # shape (1, num_agents, dim_obs)
                 observations.append(observation)
-                dist_prob = self.actor_network(observation)
-                action = self.select_from_prob(dist_prob)
+                dist_prob = self.actor_network(
+                    observation
+                )  # shape (num_agents, num_actions)
+
+                action = self.select_from_prob(dist_prob)  # len num_agents
                 actions.append(action)
+                if self.num_agents == 1:
+                    action = action[0]
                 observation, reward, done, info = self.env.step(action)
+                if self.num_agents == 1:
+                    reward = [reward]
+                    done = [done]
                 rewards.append(reward)
                 dones.append(done)
-                if dones[-1]:
+                if all(dones[-1]):
                     observation = self.env.reset()
 
             # If our episode didn't end on the last step we need to compute the value for the last state
-            if dones[-1]:
-                next_value = 0
 
-            else:
-                next_value = self.value_network(
-                    torch.tensor(
-                        observation, dtype=torch.float, device=self.device
-                    ).unsqueeze(0)
-                ).item()
+            next_value = (
+                self.value_network(
+                    torch.tensor(observation, dtype=torch.float, device=self.device)
+                )
+                .squeeze(-1)
+                .detach()
+            )  # len num_agents
 
             # Update episode_count
-            episode_count += sum(dones)
-            observations = torch.cat(observations, dim=0)
-            values = self.value_network(observations).squeeze(-1)
+            episode_count += sum(np.all(dones, axis=-1))
+            observations = torch.cat(
+                observations, dim=0
+            )  # shape (bsz, num_agents, dim_obs)
+            values = self.value_network(observations).squeeze(
+                -1
+            )  # shape (bsz, num_agents)
 
             # Compute returns and advantages
             targets, advantages = self._returns_advantages(
                 torch.tensor(rewards, device=self.device),
-                torch.tensor(dones, device=self.device),
+                torch.tensor(dones, device=self.device, dtype=torch.float),
                 values,
                 next_value,
-            )
+            )  # targets : shape (bsz, num_agents) / advantages : shape (bsz, num_agents)
 
             # Learning step !
             self.optimize_model(values, targets, advantages, actions, observations)
 
             # Test it every 50 epochs
             if (epoch + 1) % self.test_every == 0 or epoch == self.epochs - 1:
-                rewards_test.append(np.array([self.evaluate() for _ in range(100)]))
-                mean_reward = round(rewards_test[-1].mean(), 2)
-                if mean_reward > self.best_average_reward:
-                    self.best_average_reward = mean_reward
+                returns_test = np.array(
+                    [self.evaluate() for _ in range(100)]
+                )  # shape (100, num_agents)
+                mean_returns = np.round(
+                    returns_test.mean(axis=0), 2
+                )  # shape num_agents
+                stds = np.round(returns_test.std(axis=0), 2)
+                if np.mean(mean_returns) > self.best_average_reward:
+                    self.best_average_reward = np.mean(mean_returns)
                     if self.path is not None:
                         self.best_state_dict = c(self.actor_network.cpu().state_dict())
                         self.actor_network.to(self.device)
                         pickle.dump(self.best_state_dict, open(self.path, "wb"))
-
                 tk.set_postfix(
                     {
-                        "Mean rewards": mean_reward,
-                        "Std": round(rewards_test[-1].std(), 2),
+                        f"agent {i}": (mean_returns[i], stds[i])
+                        for i in range(self.num_agents)
                     }
                 )
                 observation = self.env.reset()
@@ -208,12 +222,20 @@ class A2CAgent:
     def optimize_model(self, values, targets, advantages, actions, observations):
         loss_value = self.compute_loss_value(values, targets)
         # torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
-        distributions = self.actor_network(observations)
+        distributions = self.actor_network(
+            observations
+        )  # shape (bsz, num_agents, num_actions)
         probs = distributions.gather(
-            1,
+            -1,
             torch.tensor(actions, device=self.device, dtype=torch.int64).unsqueeze(-1),
-        )
-        loss_algo = self.compute_loss_algo(probs, advantages)
+            # actions is shape (bsz, num_agents) so unsqueeze -1
+        ).squeeze(
+            -1
+        )  # probs is shape  (bsz, num_agents)
+
+        loss_algo = self.compute_loss_algo(
+            probs, advantages
+        )  # advantages is shape (bsz, num_agents)
         # torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
         entropy_bonus = self.compute_entropy_bonus(distributions)
         total_loss = (
@@ -232,21 +254,24 @@ class A2CAgent:
         observation = torch.tensor(
             observation, dtype=torch.float, device=self.device
         ).unsqueeze(0)
-        reward_episode = 0
-        done = False
+        reward_episode = [0 for _ in range(self.num_agents)]
+        done = [False for _ in range(self.num_agents)]
 
-        while not done:
+        while not all(done):
             with torch.no_grad():
                 policy = self.actor_network(observation)
-            action = policy.argmax(dim=-1)
-            observation, reward, done, info = env.step(int(action))
+            action = policy.argmax(dim=-1).tolist()
+            observation, reward, done, info = env.step(action)
             observation = torch.tensor(
                 observation, dtype=torch.float, device=self.device
             ).unsqueeze(0)
-            reward_episode += reward
+            if self.num_agents == 1:
+                reward = [reward]
+                done = [done]
+            for i, r in enumerate(reward):
+                reward_episode[i] += r
 
         env.close()
-
         return reward_episode
 
 
