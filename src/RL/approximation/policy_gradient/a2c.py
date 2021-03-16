@@ -9,6 +9,9 @@ import torch.nn as nn
 from tqdm import tqdm
 from copy import deepcopy as c
 import pickle
+import torch.distributions as torch_dist
+
+# TODO : multi-agent training
 
 
 class ValueNetwork(nn.Module):
@@ -45,14 +48,15 @@ class A2CAgent:
         gamma,
         value_network,
         actor_network,
-        optimizer_value,
-        optimizer_actor,
+        optimizer,
         device,
         n_a,
         path,
         test_every,
         epochs,
         batch_size,
+        entropy_coeff=0.1,
+        coeff_loss_value=0.1,
     ):
 
         self.epochs = epochs
@@ -68,35 +72,45 @@ class A2CAgent:
         self.actor_network = actor_network.to(device)
         self.device = device
         # Their optimizers
-        self.value_network_optimizer = optimizer_value
-        self.actor_network_optimizer = optimizer_actor
+        self.optimizer = optimizer
         self.best_state_dict = c(self.actor_network.cpu().state_dict())
         self.actor_network.to(self.device)
         self.best_average_reward = -float("inf")
+        self.entropy_coeff = entropy_coeff
+        self.coeff_loss_value = coeff_loss_value
 
     def _returns_advantages(self, rewards, dones, values, next_value):
         """
         """
-        future_values = torch.empty(self.batch_size, device=self.device)
-        future_values[:-1] = values[1:]
-        future_values[-1] = next_value
-        # inefficient
-        # targets = torch.zeros(self.batch_size, device=self.device)
-        # i = 0
-        # while i < self.batch_size:
-        #     for j, (r, d) in enumerate(zip(rewards[i:], dones[i:])):
-        #         targets[i] += self.gamma ** (j - i) * r
-        #         if i + j == self.batch_size - 1 and not d:
-        #             targets[i] += self.gamma ** (j - i) * next_value
-        #         if d:
-        #             break
-        #     i += 1
-        #
-        # advantages = (targets - values).detach()
-        # efficient
-        targets = rewards + (1 - dones.to(torch.long)) * self.gamma * future_values
+        # Mnih et al (2016) estimator of the advantage
+        targets = torch.zeros(self.batch_size, device=self.device)
+        i = 0
+        for i in range(self.batch_size):
+            targets[i] = rewards[i]
+            if dones[i]:
+                continue
+            for j in range(i + 1, self.batch_size):
+                targets[i] += self.gamma ** (j - i) * rewards[j]
+                if dones[j]:
+                    break
+            if j == self.batch_size - 1 and not dones[j]:
+                targets[i] += self.gamma ** (j + 1 - i) * next_value
+
         advantages = (targets - values).detach()
+
         return targets, advantages
+
+    @staticmethod
+    def compute_entropy_bonus(policy):
+        return -torch.sum(torch_dist.Categorical(policy).entropy())
+
+    @staticmethod
+    def compute_loss_algo(probs, advantages):
+        return -torch.sum((torch.log(probs) * advantages / len(advantages)))
+
+    @staticmethod
+    def compute_loss_value(values, targets):
+        return F.mse_loss(values, targets)
 
     @staticmethod
     def select_from_prob(dist):
@@ -192,21 +206,25 @@ class A2CAgent:
         print(f"The trainnig was done over a total of {episode_count} episodes")
 
     def optimize_model(self, values, targets, advantages, actions, observations):
-        loss_value = F.mse_loss(values, targets)
-        self.value_network_optimizer.zero_grad()
-        loss_value.backward()
+        loss_value = self.compute_loss_value(values, targets)
         # torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
-        self.value_network_optimizer.step()
-        probs = self.actor_network(observations).gather(
+        distributions = self.actor_network(observations)
+        probs = distributions.gather(
             1,
             torch.tensor(actions, device=self.device, dtype=torch.int64).unsqueeze(-1),
         )
-        loss_actor = -torch.sum((torch.log(probs) * advantages / len(advantages)))
-        self.actor_network_optimizer.zero_grad()
-        loss_actor.backward()
+        loss_algo = self.compute_loss_algo(probs, advantages)
         # torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
-        self.actor_network_optimizer.step()
-        return loss_value, loss_actor
+        entropy_bonus = self.compute_entropy_bonus(distributions)
+        total_loss = (
+            loss_algo
+            + self.coeff_loss_value * loss_value
+            + self.entropy_coeff * entropy_bonus
+        )
+        self.optimizer.zero_grad()
+        total_loss.backward()
+        self.optimizer.step()
+        return loss_value, loss_algo
 
     def evaluate(self):
         env = self.env
@@ -260,8 +278,9 @@ if __name__ == "__main__":
 
     gamma_ = 0.9
 
-    value_network_optimizer = optim.RMSprop(value_network_.parameters(), lr=0.005)
-    actor_network_optimizer = optim.RMSprop(actor_network_.parameters(), lr=0.005)
+    optimizer_ = optim.RMSprop(
+        list(value_network_.parameters()) + list(actor_network_.parameters()), lr=0.005
+    )
 
     device_ = torch.device("cpu")
     agent = A2CAgent(
@@ -269,14 +288,13 @@ if __name__ == "__main__":
         actor_network=actor_network_,
         value_network=value_network_,
         gamma=gamma_,
-        optimizer_actor=actor_network_optimizer,
-        optimizer_value=value_network_optimizer,
+        optimizer=optimizer_,
         device=device_,
         n_a=environment.action_space.n,
         path=None,
         test_every=100,
         epochs=1000,
-        batch_size=32,
+        batch_size=128,
     )
 
     agent.train()
