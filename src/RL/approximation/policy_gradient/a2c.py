@@ -10,6 +10,7 @@ from tqdm import tqdm
 from copy import deepcopy as c
 import pickle
 import torch.distributions as torch_dist
+import inspect
 
 
 class ValueNetwork(nn.Module):
@@ -50,11 +51,15 @@ class A2CAgent:
         test_every,
         epochs,
         batch_size,
-        entropy_coeff=0.1,
-        coeff_loss_value=0.1,
+        timesteps,
+        updates,
+        entropy_coeff=0.05,
+        coeff_loss_value=0.5,
         num_agents=1,
     ):
 
+        self.timesteps = timesteps
+        self.updates = updates
         self.epochs = epochs
         self.batch_size = batch_size
         self.test_every = test_every
@@ -79,21 +84,22 @@ class A2CAgent:
         """
         """
         # Mnih et al (2016) estimator of the advantage
-        targets = torch.zeros((self.batch_size, self.num_agents), device=self.device)
-        i = 0
-        for i in range(self.batch_size):
+        targets = torch.zeros((self.timesteps, self.num_agents), device=self.device)
+        for i in range(self.timesteps):
             targets[i] = rewards[i]
             if all(dones[i]):
                 continue
-            for j in range(i + 1, self.batch_size):
+            for j in range(i + 1, self.timesteps):
                 targets[i] += (1 - dones[j]) * self.gamma ** (j - i) * rewards[j]
                 if all(dones[j]):
                     break
-            if j == self.batch_size - 1 and not all(dones[j]):
+            if j == self.timesteps - 1 and not all(dones[j]):
                 targets[i] += (1 - dones[j]) * self.gamma ** (j + 1 - i) * next_value
 
         advantages = (targets - values).detach()
-
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
+        # normalization of the advantage estimation from
+        # https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail/blob/master/a2c_ppo_acktr/algo/ppo.py
         return targets, advantages
 
     @staticmethod
@@ -131,14 +137,14 @@ class A2CAgent:
         episode_count = 0
 
         observation = self.env.reset()
-        tk = tqdm(range(self.epochs))
-        for epoch in tk:
+        tk = tqdm(range(self.updates))
+        for update in tk:
             # Lets collect one batch
             actions = []
             dones = []
             rewards = []
             observations = []
-            for i in range(self.batch_size):
+            for i in range(self.timesteps):
                 if self.num_agents == 1:
                     observation = [observation]
                 observation = torch.tensor(
@@ -179,11 +185,9 @@ class A2CAgent:
             observations = torch.cat(
                 observations, dim=0
             )  # shape (bsz, num_agents, dim_obs)
-            values = self.value_network(observations).squeeze(
-                -1
-            )  # shape (bsz, num_agents)
 
-            # Compute returns and advantages
+            values = self.value_network(observations).squeeze(-1)
+
             targets, advantages = self._returns_advantages(
                 torch.tensor(rewards, device=self.device),
                 torch.tensor(dones, device=self.device, dtype=torch.float),
@@ -191,11 +195,32 @@ class A2CAgent:
                 next_value,
             )  # targets : shape (bsz, num_agents) / advantages : shape (bsz, num_agents)
 
-            # Learning step !
-            self.optimize_model(values, targets, advantages, actions, observations)
+            index = np.random.choice(
+                range(self.timesteps), size=self.batch_size, replace=False
+            )
+            for _ in range(self.epochs):
+                for j in range(0, self.timesteps, self.batch_size):
+                    values = self.value_network(
+                        observations[index[j : j + self.batch_size]]
+                    ).squeeze(
+                        -1
+                    )  # shape (bsz, num_agents)
+
+                    # Compute returns and advantages
+
+                    # Learning step !
+                    self.optimize_model(
+                        values,
+                        targets[index[j : j + self.batch_size]],
+                        advantages[index[j : j + self.batch_size]],
+                        torch.tensor(actions, device=self.device, dtype=torch.int64)[
+                            index[j : j + self.batch_size]
+                        ],
+                        observations[index[j : j + self.batch_size]],
+                    )
 
             # Test it every 50 epochs
-            if (epoch + 1) % self.test_every == 0 or epoch == self.epochs - 1:
+            if (update + 1) % self.test_every == 0 or update == self.updates - 1:
                 returns_test = np.array(
                     [self.evaluate() for _ in range(100)]
                 )  # shape (100, num_agents)
@@ -220,14 +245,15 @@ class A2CAgent:
         print(f"The trainnig was done over a total of {episode_count} episodes")
 
     def optimize_model(self, values, targets, advantages, actions, observations):
+        self.optimizer.zero_grad()
         loss_value = self.compute_loss_value(values, targets)
-        # torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
         distributions = self.actor_network(
             observations
         )  # shape (bsz, num_agents, num_actions)
+
         probs = distributions.gather(
             -1,
-            torch.tensor(actions, device=self.device, dtype=torch.int64).unsqueeze(-1),
+            actions.unsqueeze(-1),
             # actions is shape (bsz, num_agents) so unsqueeze -1
         ).squeeze(
             -1
@@ -236,21 +262,20 @@ class A2CAgent:
         loss_algo = self.compute_loss_algo(
             probs, advantages
         )  # advantages is shape (bsz, num_agents)
-        # torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
         entropy_bonus = self.compute_entropy_bonus(distributions)
         total_loss = (
             loss_algo
             + self.coeff_loss_value * loss_value
             + self.entropy_coeff * entropy_bonus
         )
-        self.optimizer.zero_grad()
         total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
+        torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
         self.optimizer.step()
-        return loss_value, loss_algo
 
     def evaluate(self):
-        env = self.env
-        observation = env.reset()
+        has_val_attr = "val" in inspect.signature(self.env.step).parameters
+        observation = self.env.reset()
         observation = torch.tensor(
             observation, dtype=torch.float, device=self.device
         ).unsqueeze(0)
@@ -261,7 +286,10 @@ class A2CAgent:
             with torch.no_grad():
                 policy = self.actor_network(observation)
             action = policy.argmax(dim=-1).tolist()
-            observation, reward, done, info = env.step(action)
+            if has_val_attr:
+                observation, reward, done, info = self.env.step(action, val=True)
+            else:
+                observation, reward, done, info = self.env.step(action)
             observation = torch.tensor(
                 observation, dtype=torch.float, device=self.device
             ).unsqueeze(0)
@@ -271,7 +299,7 @@ class A2CAgent:
             for i, r in enumerate(reward):
                 reward_episode[i] += r
 
-        env.close()
+        self.env.close()
         return reward_episode
 
 
@@ -304,7 +332,7 @@ if __name__ == "__main__":
     gamma_ = 0.9
 
     optimizer_ = optim.RMSprop(
-        list(value_network_.parameters()) + list(actor_network_.parameters()), lr=0.005
+        list(value_network_.parameters()) + list(actor_network_.parameters()), lr=0.0001
     )
 
     device_ = torch.device("cpu")
@@ -317,9 +345,11 @@ if __name__ == "__main__":
         device=device_,
         n_a=environment.action_space.n,
         path=None,
-        test_every=100,
-        epochs=1000,
+        test_every=10,
+        epochs=4,
         batch_size=128,
+        timesteps=1000,
+        updates=1000,
     )
 
     agent.train()
