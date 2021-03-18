@@ -104,11 +104,11 @@ class A2CAgent:
 
     @staticmethod
     def compute_entropy_bonus(policy):
-        return -torch.sum(torch_dist.Categorical(policy).entropy())
+        return -torch.mean(torch_dist.Categorical(policy).entropy())
 
     @staticmethod
     def compute_loss_algo(probs, advantages):
-        return -torch.sum((torch.log(probs) * advantages / len(advantages)))
+        return -torch.mean((torch.log(probs) * advantages))
 
     @staticmethod
     def compute_loss_value(values, targets):
