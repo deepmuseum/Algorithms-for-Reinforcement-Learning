@@ -4,6 +4,7 @@ https://arxiv.org/pdf/1707.06347.pdf
 from RL.approximation.policy_gradient.a2c import A2CAgent
 from copy import deepcopy as c
 import torch
+import numpy as np
 
 
 class PPO(A2CAgent):
@@ -55,7 +56,33 @@ class PPO(A2CAgent):
         surr2 = torch.clamp(ratios, 1 - self.epsilon, 1 + self.epsilon) * advantages
         return -torch.min(surr1, surr2).mean()
 
-    def optimize_model(self, values, targets, advantages, actions, observations):
+    def optimize_step(self, observations, actions, targets, advantages):
+        self.old_actor.load_state_dict(c(self.actor_network.state_dict()))
+        index = np.random.choice(
+            range(self.timesteps), size=self.batch_size, replace=False
+        )
+        for _ in range(self.epochs):
+            for j in range(0, self.timesteps, self.batch_size):
+                values = self.value_network(
+                    observations[index[j : j + self.batch_size]]
+                ).squeeze(
+                    -1
+                )  # shape (bsz, num_agents)
+
+                # Compute returns and advantages
+
+                # Learning step !
+                self.optimize_epoch(
+                    values,
+                    targets[index[j : j + self.batch_size]],
+                    advantages[index[j : j + self.batch_size]],
+                    torch.tensor(actions, device=self.device, dtype=torch.int64)[
+                        index[j : j + self.batch_size]
+                    ],
+                    observations[index[j : j + self.batch_size]],
+                )
+
+    def optimize_epoch(self, values, targets, advantages, actions, observations):
         self.optimizer.zero_grad()
         loss_value = self.compute_loss_value(values, targets)
         distributions = self.actor_network(
@@ -87,7 +114,6 @@ class PPO(A2CAgent):
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
         torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
-        self.old_actor.load_state_dict(c(self.actor_network.state_dict()))
         self.optimizer.step()
 
 

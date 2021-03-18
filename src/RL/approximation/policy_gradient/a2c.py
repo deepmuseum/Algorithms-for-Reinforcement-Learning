@@ -195,29 +195,7 @@ class A2CAgent:
                 next_value,
             )  # targets : shape (bsz, num_agents) / advantages : shape (bsz, num_agents)
 
-            index = np.random.choice(
-                range(self.timesteps), size=self.batch_size, replace=False
-            )
-            for _ in range(self.epochs):
-                for j in range(0, self.timesteps, self.batch_size):
-                    values = self.value_network(
-                        observations[index[j : j + self.batch_size]]
-                    ).squeeze(
-                        -1
-                    )  # shape (bsz, num_agents)
-
-                    # Compute returns and advantages
-
-                    # Learning step !
-                    self.optimize_model(
-                        values,
-                        targets[index[j : j + self.batch_size]],
-                        advantages[index[j : j + self.batch_size]],
-                        torch.tensor(actions, device=self.device, dtype=torch.int64)[
-                            index[j : j + self.batch_size]
-                        ],
-                        observations[index[j : j + self.batch_size]],
-                    )
+            self.optimize_step(observations, actions, targets, advantages)
 
             # Test it every 50 epochs
             if (update + 1) % self.test_every == 0 or update == self.updates - 1:
@@ -244,7 +222,32 @@ class A2CAgent:
 
         print(f"The trainnig was done over a total of {episode_count} episodes")
 
-    def optimize_model(self, values, targets, advantages, actions, observations):
+    def optimize_step(self, observations, actions, targets, advantages):
+        index = np.random.choice(
+            range(self.timesteps), size=self.batch_size, replace=False
+        )
+        for _ in range(self.epochs):
+            for j in range(0, self.timesteps, self.batch_size):
+                values = self.value_network(
+                    observations[index[j : j + self.batch_size]]
+                ).squeeze(
+                    -1
+                )  # shape (bsz, num_agents)
+
+                # Compute returns and advantages
+
+                # Learning step !
+                self.optimize_epoch(
+                    values,
+                    targets[index[j : j + self.batch_size]],
+                    advantages[index[j : j + self.batch_size]],
+                    torch.tensor(actions, device=self.device, dtype=torch.int64)[
+                        index[j : j + self.batch_size]
+                    ],
+                    observations[index[j : j + self.batch_size]],
+                )
+
+    def optimize_epoch(self, values, targets, advantages, actions, observations):
         self.optimizer.zero_grad()
         loss_value = self.compute_loss_value(values, targets)
         distributions = self.actor_network(
