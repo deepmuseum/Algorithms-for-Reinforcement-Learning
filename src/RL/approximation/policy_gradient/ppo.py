@@ -58,8 +58,8 @@ class PPO(A2CAgent):
 
     def optimize_step(self, observations, actions, targets, advantages):
         self.old_actor.load_state_dict(c(self.actor_network.state_dict()))
-        index = np.random.choice(
-            range(self.timesteps), size=self.batch_size, replace=False
+        index = np.random.permutation(
+            range(self.timesteps)
         )
         for _ in range(self.epochs):
             for j in range(0, self.timesteps, self.batch_size):
