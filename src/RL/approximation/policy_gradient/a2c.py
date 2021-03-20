@@ -71,7 +71,7 @@ class A2CAgent:
         self.value_network = value_network.to(device)
         self.actor_network = actor_network.to(device)
         self.device = device
-        # Their optimizers
+        # Their optimizer
         self.optimizer = optimizer
         self.best_state_dict = c(self.actor_network.cpu().state_dict())
         self.actor_network.to(self.device)
@@ -94,7 +94,7 @@ class A2CAgent:
                 if all(dones[j]):
                     break
             if j == self.timesteps - 1 and not all(dones[j]):
-                targets[i] += (1 - dones[j]) * self.gamma ** (j + 1 - i) * next_value
+                targets[i] += (1 - dones[j]) * self.gamma ** (self.timesteps - i) * next_value
 
         advantages = (targets - values).detach()
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
@@ -220,11 +220,11 @@ class A2CAgent:
                 )
                 observation = self.env.reset()
 
-        print(f"The trainnig was done over a total of {episode_count} episodes")
+        print(f"The training was done over a total of {episode_count} episodes")
 
     def optimize_step(self, observations, actions, targets, advantages):
-        index = np.random.choice(
-            range(self.timesteps), size=self.batch_size, replace=False
+        index = np.random.permutation(
+            range(self.timesteps)
         )
         for _ in range(self.epochs):
             for j in range(0, self.timesteps, self.batch_size):
@@ -237,7 +237,7 @@ class A2CAgent:
                 # Compute returns and advantages
 
                 # Learning step !
-                self.optimize_epoch(
+                self.optimize_batch(
                     values,
                     targets[index[j : j + self.batch_size]],
                     advantages[index[j : j + self.batch_size]],
@@ -247,7 +247,8 @@ class A2CAgent:
                     observations[index[j : j + self.batch_size]],
                 )
 
-    def optimize_epoch(self, values, targets, advantages, actions, observations):
+    def optimize_batch(self, values, targets, advantages, actions, observations):
+
         self.optimizer.zero_grad()
         loss_value = self.compute_loss_value(values, targets)
         distributions = self.actor_network(

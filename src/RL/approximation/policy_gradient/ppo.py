@@ -72,7 +72,7 @@ class PPO(A2CAgent):
                 # Compute returns and advantages
 
                 # Learning step !
-                self.optimize_epoch(
+                self.optimize_batch(
                     values,
                     targets[index[j : j + self.batch_size]],
                     advantages[index[j : j + self.batch_size]],
@@ -82,7 +82,7 @@ class PPO(A2CAgent):
                     observations[index[j : j + self.batch_size]],
                 )
 
-    def optimize_epoch(self, values, targets, advantages, actions, observations):
+    def optimize_batch(self, values, targets, advantages, actions, observations):
         self.optimizer.zero_grad()
         loss_value = self.compute_loss_value(values, targets)
         distributions = self.actor_network(
