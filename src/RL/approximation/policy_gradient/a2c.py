@@ -22,7 +22,7 @@ class ValueNetwork(nn.Module):
         return self.model(x).squeeze(0)
 
     def predict(self, x):
-        return self(x).detach().numpy()[0]
+        return self(x).squeeze(0).detach().numpy()
 
 
 class ActorNetwork(nn.Module):
