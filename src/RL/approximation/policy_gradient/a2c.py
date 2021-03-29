@@ -61,7 +61,7 @@ class A2CAgent:
         self.timesteps = timesteps
         self.updates = updates
         self.epochs = epochs
-        self.batch_size = batch_size
+        self.batch_size = batch_size // num_agents
         self.test_every = test_every
         self.path = path
         self.env = env
@@ -100,7 +100,10 @@ class A2CAgent:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
         # normalization of the advantage estimation from
         # https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail/blob/master/a2c_ppo_acktr/algo/ppo.py
-        return targets, advantages
+        dones = torch.cat(
+            (torch.zeros((1, dones.shape[-1]), device=self.device), dones[1:]), dim=0
+        )
+        return (1 - dones) * targets, (1 - dones) * advantages, dones
 
     @staticmethod
     def compute_entropy_bonus(policy):
@@ -174,33 +177,34 @@ class A2CAgent:
 
             next_value = (
                 self.value_network(
-                    torch.tensor(observation, dtype=torch.float, device=self.device)
-                )
-                .squeeze(-1)
-                .detach()
+                    torch.tensor(
+                        observation, dtype=torch.float, device=self.device
+                    ).unsqueeze(0)
+                ).detach()
+            ).squeeze(
+                -1
             )  # len num_agents
-
             # Update episode_count
+
             episode_count += sum(np.all(dones, axis=-1))
             observations = torch.cat(
                 observations, dim=0
             )  # shape (bsz, num_agents, dim_obs)
-
+            dones = torch.tensor(dones, device=self.device, dtype=torch.float)
             values = self.value_network(observations).squeeze(-1)
-
-            targets, advantages = self._returns_advantages(
-                torch.tensor(rewards, device=self.device),
-                torch.tensor(dones, device=self.device, dtype=torch.float),
-                values,
-                next_value,
+            targets, advantages, dones = self._returns_advantages(
+                torch.tensor(rewards, device=self.device), dones, values, next_value
             )  # targets : shape (bsz, num_agents) / advantages : shape (bsz, num_agents)
 
-            self.optimize_step(observations, actions, targets, advantages)
+            actions = torch.tensor(
+                actions, device=self.device, dtype=torch.int64
+            ).unsqueeze(-1)
+            self.optimize_step(observations, actions, targets, advantages, dones)
 
             # Test it every 50 epochs
             if (update + 1) % self.test_every == 0 or update == self.updates - 1:
                 returns_test = np.array(
-                    [self.evaluate() for _ in range(100)]
+                    [self.evaluate() for _ in range(100)]  # shape = 100, 4
                 )  # shape (100, num_agents)
                 mean_returns = np.round(
                     returns_test.mean(axis=0), 2
@@ -222,13 +226,13 @@ class A2CAgent:
 
         print(f"The trainnig was done over a total of {episode_count} episodes")
 
-    def optimize_step(self, observations, actions, targets, advantages):
-        index = np.random.choice(
-            range(self.timesteps), size=self.batch_size, replace=False
-        )
+    def optimize_step(self, observations, actions, targets, advantages, dones):
+        index = np.random.permutation(range(self.timesteps))
         for _ in range(self.epochs):
             for j in range(0, self.timesteps, self.batch_size):
-                values = self.value_network(
+                values = (
+                    1 - dones[index[j : j + self.batch_size]]
+                ) * self.value_network(
                     observations[index[j : j + self.batch_size]]
                 ).squeeze(
                     -1
@@ -237,26 +241,23 @@ class A2CAgent:
                 # Compute returns and advantages
 
                 # Learning step !
-                self.optimize_epoch(
+                self.optimize_minibatch(
                     values,
                     targets[index[j : j + self.batch_size]],
                     advantages[index[j : j + self.batch_size]],
-                    torch.tensor(actions, device=self.device, dtype=torch.int64)[
-                        index[j : j + self.batch_size]
-                    ],
+                    actions[index[j : j + self.batch_size]],
                     observations[index[j : j + self.batch_size]],
                 )
 
-    def optimize_epoch(self, values, targets, advantages, actions, observations):
+    def optimize_minibatch(self, values, targets, advantages, actions, observations):
         self.optimizer.zero_grad()
         loss_value = self.compute_loss_value(values, targets)
         distributions = self.actor_network(
             observations
         )  # shape (bsz, num_agents, num_actions)
-
         probs = distributions.gather(
             -1,
-            actions.unsqueeze(-1),
+            actions,
             # actions is shape (bsz, num_agents) so unsqueeze -1
         ).squeeze(
             -1
@@ -277,7 +278,7 @@ class A2CAgent:
         self.optimizer.step()
 
     def evaluate(self):
-        has_val_attr = "val" in inspect.signature(self.env.step).parameters
+        has_val_param = "val" in inspect.signature(self.env.step).parameters
         observation = self.env.reset()
         observation = torch.tensor(
             observation, dtype=torch.float, device=self.device
@@ -289,7 +290,7 @@ class A2CAgent:
             with torch.no_grad():
                 policy = self.actor_network(observation)
             action = policy.argmax(dim=-1).tolist()
-            if has_val_attr:
+            if has_val_param:
                 observation, reward, done, info = self.env.step(action, val=True)
             else:
                 observation, reward, done, info = self.env.step(action)
@@ -349,7 +350,7 @@ if __name__ == "__main__":
         n_a=environment.action_space.n,
         path=None,
         test_every=10,
-        epochs=4,
+        epochs=2,
         batch_size=128,
         timesteps=1000,
         updates=1000,

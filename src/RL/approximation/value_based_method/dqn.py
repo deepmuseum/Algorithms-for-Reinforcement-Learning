@@ -4,6 +4,7 @@ from torch import nn
 from copy import deepcopy as c
 from tqdm import tqdm
 import pickle
+import inspect
 
 
 class QNetwork(nn.Module):
@@ -193,6 +194,8 @@ class DQN:
 
     def evaluate(self):
         returns = []
+        has_val_param = "val" in inspect.signature(self.env.step).parameters
+
         for _ in range(100):
             observation = self.env.reset()
             if self.num_agents == 1:
@@ -206,7 +209,10 @@ class DQN:
                 action = self.q_network.greedy(observation.unsqueeze(0))
                 if self.num_agents == 1:
                     action = action[0]
-                observation, reward, done, _ = self.env.step(action)
+                if has_val_param:
+                    observation, reward, done, _ = self.env.step(action, val=True)
+                else:
+                    observation, reward, done, _ = self.env.step(action)
                 if self.num_agents == 1:
                     observation, reward, done = [observation], [reward], [done]
                 for j, r in enumerate(reward):

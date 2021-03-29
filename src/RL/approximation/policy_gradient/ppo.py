@@ -56,14 +56,14 @@ class PPO(A2CAgent):
         surr2 = torch.clamp(ratios, 1 - self.epsilon, 1 + self.epsilon) * advantages
         return -torch.min(surr1, surr2).mean()
 
-    def optimize_step(self, observations, actions, targets, advantages):
+    def optimize_step(self, observations, actions, targets, advantages, dones):
         self.old_actor.load_state_dict(c(self.actor_network.state_dict()))
-        index = np.random.choice(
-            range(self.timesteps), size=self.batch_size, replace=False
-        )
+        index = np.random.permutation(range(self.timesteps))
         for _ in range(self.epochs):
             for j in range(0, self.timesteps, self.batch_size):
-                values = self.value_network(
+                values = (
+                    1 - dones[index[j : j + self.batch_size]]
+                ) * self.value_network(
                     observations[index[j : j + self.batch_size]]
                 ).squeeze(
                     -1
@@ -72,17 +72,15 @@ class PPO(A2CAgent):
                 # Compute returns and advantages
 
                 # Learning step !
-                self.optimize_epoch(
+                self.optimize_minibatch(
                     values,
                     targets[index[j : j + self.batch_size]],
                     advantages[index[j : j + self.batch_size]],
-                    torch.tensor(actions, device=self.device, dtype=torch.int64)[
-                        index[j : j + self.batch_size]
-                    ],
+                    actions[index[j : j + self.batch_size]],
                     observations[index[j : j + self.batch_size]],
                 )
 
-    def optimize_epoch(self, values, targets, advantages, actions, observations):
+    def optimize_minibatch(self, values, targets, advantages, actions, observations):
         self.optimizer.zero_grad()
         loss_value = self.compute_loss_value(values, targets)
         distributions = self.actor_network(
@@ -91,7 +89,7 @@ class PPO(A2CAgent):
 
         probs = distributions.gather(
             -1,
-            actions.unsqueeze(-1),
+            actions
             # actions is shape (bsz, num_agents) so unsqueeze -1
         ).squeeze(
             -1
@@ -100,7 +98,7 @@ class PPO(A2CAgent):
         # probs from previous policy
         with torch.no_grad():
             prev_dist = self.old_actor(observations)
-            prev_probs = prev_dist.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
+            prev_probs = prev_dist.gather(-1, actions).squeeze(-1)
 
         loss_algo = self.compute_loss_ppo(
             probs, advantages, prev_probs
@@ -112,8 +110,8 @@ class PPO(A2CAgent):
             + self.entropy_coeff * entropy_bonus
         )
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
-        torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
+        # torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), 1)
+        # torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 1)
         self.optimizer.step()
 
 
@@ -121,6 +119,7 @@ if __name__ == "__main__":
     from RL.approximation.policy_gradient.a2c import ActorNetwork, ValueNetwork
     import torch.nn as nn
     from torch import optim
+
     import gym
 
     environment = gym.make("CartPole-v1")
@@ -163,8 +162,8 @@ if __name__ == "__main__":
         path=None,
         test_every=10,
         epochs=4,
-        batch_size=128,
-        timesteps=1000,
+        batch_size=16,
+        timesteps=500,
         updates=1000,
     )
 
