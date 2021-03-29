@@ -72,6 +72,7 @@ class PPO(A2CAgent):
                 # Compute returns and advantages
 
                 # Learning step !
+
                 self.optimize_minibatch(
                     values,
                     targets[index[j : j + self.batch_size]],
